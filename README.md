@@ -38,7 +38,8 @@ This will run all the cleaning steps and write the following files into your out
 * clean data csv
 * clean data xlsx
 * clean data repeats csv
-* clean data repleast xlsx
+* clean data repeats xlsx
 * summary of all steps performed
 
-**N.B. Before running, edit the spreadsheet from iMits to fix the headers and remove the 'Status Name' column from the F1 Colonies Tab**
+**N.B. Before running a new export, edit the spreadsheet to remove the 'Status Name' column from the F1 Colonies Tab**
+**Additionally, the header columns may need to be manually merged so they're all the same "level"**
