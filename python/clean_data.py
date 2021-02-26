@@ -17,10 +17,14 @@ Finally, add the viability information
 
 """
 import os
+import sys
+import random
+import argparse
+import numpy as np
 import pandas as pd
 pd.options.mode.chained_assignment = None
-import random
-import numpy as np
+engine='openpyxl'
+
 from datetime import datetime
 
 # indicates whether functions should report information about their cleaning steps (set in main function)
@@ -678,11 +682,9 @@ def joinData(imitsData):
     the Deletion experiments (Not Indel, HDR, or HR)
     """
     # separate the Mouse Production and Colony sheets
-    #attempts = pd.read_excel(imitsData, 'Mouse Production', header=5)  # column headings in fifth row
-    # column headings were fixed March 2020, no need to specify header
-    attempts = pd.read_excel(imitsData, 'Mouse Production')  # column headings in fifth row
-    #colonies = pd.read_excel(imitsData, 'F1 Colonies', header=3)  # column headings in 3rd row
-    colonies = pd.read_excel(imitsData, 'F1 Colonies')  # column headings in 3rd row
+    # column headings in first row as of October 2020
+    attempts = pd.read_excel(imitsData, 'Mouse Production', header=1)
+    colonies = pd.read_excel(imitsData, 'F1 Colonies', header=1)
 
     # join the two sheets on their MI Attempt URL etc. also include other fields that are
     # reported in both sheets so they aren't duplicated (have ensured that these fields all match)
@@ -692,6 +694,7 @@ def joinData(imitsData):
                                                   'Gene MGI Accession ID',
                                                   'Consortium',
                                                   'Production Centre'], how='left')
+
 
     # remove fields from the merged dataset we have no interest in analyzing and don't need for filtering
     remove = ['IMPC Mutant Strain Donor', 'MF External Ref', 'Comments', 'Mi Attempt External Ref', 'F1 Colony Name',
@@ -1180,24 +1183,30 @@ def addScores(derivedData, gnomadLof):
 
 
 def main():
+
+    # parse command line args
+    parser = argparse.ArgumentParser(description="clean and process data prior to analysis")
+    parser.add_argument('input', type=argparse.FileType('r'), default=sys.stdin)
+    parser.add_argument('--verbose', '-v', action='store_true', help='print verbose cleaning steps')
+    parser.add_argument('outdir', nargs='?', help='folder to output results to, defaults to date_output')
+    args = parser.parse_args()
+
     global VERBOSE
-    VERBOSE = True
-    engine='openpyxl'
+    VERBOSE = args.verbose
 
-    datePrefix = datetime.now().strftime("%m-%d-%Y")
+    if not args.input.name or not (args.input.name).endswith(".xlsx"):
+        sys.exit("Please provide an .xlsx file as input, exported from iMits")
+    if not args.outdir:
+        outdir = datetime.now().strftime("%m-%d-%Y")+"_output"
+        print(f'No output folder provided. Will write results to: {outdir}')
+    else:
+        outdir = args.output
 
-    # using new data
-    outputFile = datePrefix + "_IMPC_Cas9_2020-10-09"
-
-    repeatedAttemptFile = datePrefix + "_Repeats-IMPC_Cas9_2020-10-09"
-    # precautionary check, only written if duplicate attempts exist
-    duplicateAttemptsFile = datePrefix + "_DuplicateAttemptsRemaining.xlsx"
-
-    # read in raw data downloaded from IMITS (new as of May 29th, 2019) (replaced January 2020)
-    imitsData = pd.ExcelFile(os.path.join(os.getcwd(), 'iMTS_AllCas9_20201009.xlsx'), engine='openpyxl')
+    # read in data and merge shees
+    imitsData = pd.ExcelFile(args.input.name, engine='openpyxl')
     joinedData = joinData(imitsData)
 
-    # read in data on all successful experiments from iMits
+    # store all successful experiments from iMits
     gltExcel = pd.ExcelFile('input/20190610_mi_attempts_list.xlsx', engine='openpyxl')
     gltData = pd.read_excel(gltExcel, "All GLT")
     successGenes, successAttempts = getSuccesses(gltData)
@@ -1311,37 +1320,40 @@ def main():
     print("Records with duplicate attempts after filtering: " + str(len(duplicateAttempts.index)))
     # only export if duplicates exist
     if len(duplicateAttempts.index) > 0:
-        duplicateAttempts.to_excel("output/" + duplicateAttemptsFile, index=False)
+        duplicateAttemptsFile = "DuplicateAttemptsRemaining.xlsx"
+        duplicateAttempts.to_excel(os.path.join(outdir, duplicateAttemptsFile), index=False)
         # now remove them, they will be identical records
         # excepting potentially the Allele Type/Subtype which aren't used in analysis anyways
         print("(They will be removed)")
         cleanData = cleanData.drop_duplicates(subset='Mi Attempt URL')
-        # N.B. this is done before the repeated genes are removed since these attempts will be incorrectly marked
-        # as repeated otherwise
+        # N.B. this is done BEFORE the repeated genes are removed
+        # these attempts will be incorrectly marked as repeated otherwise
 
-    # the experiments that are repeats are exported in an excel which highlights what was changed
-    repeatedAttempts = repeatAnalysis(cleanData, successAttempts)  # cleanData also has attempts that are repeat experiments marked
-
+    # process repeated experiments and highlight changes
+    repeatedAttempts = repeatAnalysis(cleanData, successAttempts)
     repeatedAttempts = repeatedAttempts.drop(['datetime'], axis=1)  # remove the datetime column
-    repeatedAttempts.to_excel(os.path.join("output", repeatedAttemptFile + ".xlsx"), index=False)
-    repeatedAttempts.to_csv(os.path.join("output", repeatedAttemptFile + ".csv"), index=False)
+
+    # export as both an excel and csv
+    repeatedAttemptFile = "Repeats-IMPC_Cas9_2020-10-09"
+    repeatedAttempts.to_excel(os.path.join(outdir, repeatedAttemptFile + ".xlsx"), index=False)
+    repeatedAttempts.to_csv(os.path.join(outdir, repeatedAttemptFile + ".csv"), index=False)
 
     # perform filtering to only keep one attempt per gene, also mark those which have a filtered success
     repeatedGenesRemoved = removeRepeatedGenes(cleanData, successGenes)
 
     # export clean data with the repeats removed
-    repeatedGenesRemoved = repeatedGenesRemoved.drop(['datetime'], axis=1)  # remove the datetime column
-    repeatedGenesRemoved.to_excel(os.path.join("output", outputFile + ".xlsx"), index=False)
-    repeatedGenesRemoved.to_csv(os.path.join("output", outputFile + ".csv"), index=False)
+    repeatedGenesRemoved = repeatedGenesRemoved.drop(['datetime'], axis=1)  # not needed 
+    repeatedGenesRemoved.to_excel(os.path.join(outdir, outputFile + ".xlsx"), index=False)
+    repeatedGenesRemoved.to_csv(os.path.join(outdir, outputFile + ".csv"), index=False)
     print(f'\n{len(repeatedGenesRemoved.index)} experiments remaining after all cleaning and filtering')
 
-    # also export the attempts that produced two colonies after filtering
+    # also export the attempts that produced two colonies after filtering (should be none)
     miURLS = cleanData["Mi Attempt URL"]
     duplicateAttempts = cleanData[miURLS.isin(miURLS[miURLS.duplicated()])]
     print("Records with duplicate attempts after filtering: " + str(len(duplicateAttempts.index)))
     # only export if duplicates exist
     if len(duplicateAttempts.index) > 0:
-        duplicateAttempts.to_excel("output/" + duplicateAttemptsFile, index=False)
+        duplicateAttempts.to_excel(os.path.join(outdir, duplicateAttemptsFile), index=False)
 
 
 if __name__ == "__main__":
