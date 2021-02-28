@@ -24,7 +24,6 @@ import numpy as np
 import pandas as pd
 pd.options.mode.chained_assignment = None
 engine='openpyxl'
-
 from datetime import datetime
 
 # indicates whether functions should report information about their cleaning steps (set in main function)
@@ -86,6 +85,10 @@ def filterData(joinedData, viabilityReport):
             # if genotype is confirmed, allele QC should be present
             fd.drop(index, inplace=True)
             removedCount += 1
+        elif not str(row['Zygote']).startswith('C57BL/6N'):
+            # want C57BL/6N background only
+            fd.drop(index, inplace=True)
+            removedCount+=1
         elif not pd.isnull(row['Allele Type']):
             '''
             N.B. this must be the last criteria checked, otherwise elif statements after it
@@ -312,11 +315,7 @@ def addCas9Concentration(fd):
              (fd['Protein Concentration'] >= 500) & (fd['Protein Concentration'] < 1000) & (fd['mRNA Concentration'].isnull()),
              (fd['Protein Concentration'] >= 1000) & (fd['mRNA Concentration'].isnull())
              ]
-    categories = ["Low", 'Medium', 'High', 'Low', 'Medium', 'High']
-
-    # update 03/27/2019: Not reporting the concentration level categories
-    #fd['Cas9 Concentration Level'] = np.select(thresholds, categories)
-
+    
     if VERBOSE:
         # sake of curiosity
         """
@@ -560,7 +559,6 @@ def addCalculatedColumns(filteredData, viabilityReport, essentialityReport):
     markRepeated(fd)
 
     return fd
-
 
 def calculateCutSize(row, guideColumns):
     guideCuts = []
@@ -1202,12 +1200,15 @@ def main():
     else:
         outdir = args.output
 
+    if os.path.isdir(outdir):
+        sys.exit("Output directory already exists. Please delete it or provide a different outdir")
+
     # read in data and merge shees
     imitsData = pd.ExcelFile(args.input.name, engine='openpyxl')
     joinedData = joinData(imitsData)
 
     # store all successful experiments from iMits
-    gltExcel = pd.ExcelFile('input/20190610_mi_attempts_list.xlsx', engine='openpyxl')
+    gltExcel = pd.ExcelFile('annotation/20190610_mi_attempts_list.xlsx', engine='openpyxl')
     gltData = pd.read_excel(gltExcel, "All GLT")
     successGenes, successAttempts = getSuccesses(gltData)
 
@@ -1223,10 +1224,10 @@ def main():
     print(f'{len(joinedData.index)} experiments initially ({len(duplicateAttempts.index)} are duplicates from merge)')
 
     # import the viability report which is used to add a viability column
-    viabilityReport = pd.read_csv('input/all_genes_viability.csv')
+    viabilityReport = pd.read_csv('annotation/all_genes_viability.csv')
 
     # add in corrections to data from BCM
-    informationBCMExcel = pd.ExcelFile("input/NoFounder_Reasons/20190327_ExperimentsWithFoundersNoGLT_BCM.xlsx", engine='openpyxl')
+    informationBCMExcel = pd.ExcelFile("annotation/no_founder_reasons/20190327_ExperimentsWithFoundersNoGLT_BCM.xlsx", engine='openpyxl')
     informationBCM = pd.read_excel(informationBCMExcel, '1+ G0 no GLT')
     addCorrections(joinedData, informationBCM)
 
@@ -1234,42 +1235,46 @@ def main():
     filteredData = filterData(joinedData, viabilityReport)
 
     # remove the non protein-coding genes
-    proteinCodingGenes = pd.read_csv('input/protein-coding_MGI_20190604.csv')
+    proteinCodingGenes = pd.read_csv('annotation/protein-coding-mgi_14-02-2021.csv')
     filteredData = removeNonProteinCoding(filteredData, proteinCodingGenes)
 
     # remove duplicates (complete duplicates this is, exact same attempt and colony
     filteredData_duplicatesRemoved = filteredData.loc[filteredData.astype(str).drop_duplicates().index]
 
     # import the report on essentiality
-    essentialityFile = pd.ExcelFile('input/HumanOrtholog_Info/HumanEssentiality_MouseOrthologs.xlsx', engine='openpyxl')
+    essentialityFile = pd.ExcelFile('annotation/human_orthologs/HumanEssentiality_MouseOrthologs.xlsx', engine='openpyxl')
     essentialityReport = pd.read_excel(essentialityFile, 'Sheet1')
 
     # add derived and calculated columns for analysis
     derivedData = addCalculatedColumns(filteredData_duplicatesRemoved, viabilityReport, essentialityReport)
 
     # add gene-related information
-    geneInfoFile = pd.ExcelFile('input/AnnotationInfo.xlsx', engine='openpyxl')
+    #TODO: regenerate this annotation info
+    geneInfoFile = pd.ExcelFile('annotation/AnnotationInfo.xlsx', engine='openpyxl')
     geneInfo = pd.read_excel(geneInfoFile, 'Sheet1')
     addGeneAnalysis(derivedData, geneInfo)
 
     # add human orthologs and ensembl gene ids for the human genes
-    humanOrthologsExcel = pd.ExcelFile("input/HumanOrtholog_Info/Human_mouse_orthologues_for_IMPC.xlsx", engine='openpyxl')
+    humanOrthologsExcel = pd.ExcelFile("annotation/human_orthologs/Human_mouse_orthologues_for_IMPC.xlsx", engine='openpyxl')
     humanOrthologs = pd.read_excel(humanOrthologsExcel, "All_protCoding_score>=5")
 
     # add gnomad dataset for pLI and oe scores
-    gnomadExcel = pd.ExcelFile("input/HumanOrtholog_Info/gnomad_v2_1_1_lof_metrics_by_gene.xlsx", engine='openpyxl')
+    gnomadExcel = pd.ExcelFile("annotation/human_orthologs/gnomad_v2_1_1_lof_metrics_by_gene.xlsx", engine='openpyxl')
     gnomad = pd.read_excel(gnomadExcel, 'Sheet1')
 
     # add the human orthologs and pLI/oe scores for the orthologs from the gnomad dataset
     # for cases where there are multiple orthologs, take the average of the scores
     addOrthologInfo(derivedData, humanOrthologs, gnomad)
 
+    # create output folder
+    os.mkdir(outdir)
+
     # outputting experiments with founder pups born but no GLT for questions prior to removal of columns
     foundersNoGLT = derivedData.loc[(derivedData['#G0 deletion event detected'] > 0) & (derivedData['GLT'] == 'f')]
     foundersNoGLT = foundersNoGLT.sort_values(by=['Production Centre', 'Mi Date'])
-    foundersNoGLT.to_excel(os.path.join("output", "ExperimentsWithFoundersNoGLT.xlsx"), index=False)
+    foundersNoGLT.to_excel(os.path.join(outdir, "ExperimentsWithFoundersNoGLT.xlsx"), index=False)
 
-    noFounderDir = "input/NoFounder_Reasons"
+    noFounderDir = "annotation/no_founder_reasons"
     derivedData['Reason GLT Failed'] = ''  # add column to track reason
     for GLT_Failure_Excel in os.listdir(noFounderDir):
         gltInfo = pd.read_excel(pd.ExcelFile(os.path.join(noFounderDir, GLT_Failure_Excel)), '1+ G0 no GLT', engine='openpyxl')
@@ -1342,9 +1347,10 @@ def main():
     repeatedGenesRemoved = removeRepeatedGenes(cleanData, successGenes)
 
     # export clean data with the repeats removed
+    cleanDataFile = "Clean-IMPC_Cas9_2020-10-09"
     repeatedGenesRemoved = repeatedGenesRemoved.drop(['datetime'], axis=1)  # not needed 
-    repeatedGenesRemoved.to_excel(os.path.join(outdir, outputFile + ".xlsx"), index=False)
-    repeatedGenesRemoved.to_csv(os.path.join(outdir, outputFile + ".csv"), index=False)
+    repeatedGenesRemoved.to_excel(os.path.join(outdir, cleanDataFile + ".xlsx"), index=False)
+    repeatedGenesRemoved.to_csv(os.path.join(outdir, cleanDataFile + ".csv"), index=False)
     print(f'\n{len(repeatedGenesRemoved.index)} experiments remaining after all cleaning and filtering')
 
     # also export the attempts that produced two colonies after filtering (should be none)
