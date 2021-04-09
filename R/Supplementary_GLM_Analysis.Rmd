@@ -1,0 +1,140 @@
+---
+title: "April 2021 Cas9 Production"
+date: "April 4th, 2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(jtools)
+
+dataset = read_excel("Clean-IMPC_Cas9_2021_03_annotated.xlsx")
+```
+
+```{r cleaning}
+
+# add annotations and then check the covariance
+# subset to columns of interest
+variables <- c("#G0 deletion event detected",
+               "Founder Rate (per Embryos Transferred)",
+               "Cellular Essential",
+               "CpGsites",
+               "pLI of Orthologs",
+               "oe of Orthologs",
+               "Has Omim Annotation",
+               "Relative Chromosomal Position",
+               "Staining Overlap",
+               "AverageH3K27me3_Intron_PeakScore",
+               "AverageH3K27ac_PeakScore",
+               "all_stages_PercentileRank")
+ds <- dataset[variables]
+nrow(ds) # before removing NAs
+
+# remove rows with NA values in the following fields:
+ds<- ds[complete.cases(ds$`Cellular Essential`),]
+ds <- ds[complete.cases(ds$`pLI of Orthologs`),]
+ds <- ds[complete.cases(ds$`oe of Orthologs`),]
+ds <- ds[complete.cases(ds$`Staining Overlap`),]
+ds <- ds[complete.cases(ds$`all_stages_PercentileRank`),]
+
+nrow(ds) # after removing NAs
+
+# remove experiments that are both Methylated and Acetylated
+ds$acetylation <- as.numeric(ds$AverageH3K27ac_PeakScore)
+ds$methylation <- as.numeric(ds$AverageH3K27me3_Intron_PeakScore)
+ds$acetylation[is.na(ds$acetylation)] <- 0
+ds$methylation[is.na(ds$methylation)] <- 0
+ds <- subset(ds, !(ds$acetylation != 0 & ds$methylation != 0))
+
+# FOUNDERS IS OUTPUT
+Founders <- ifelse(ds$`#G0 deletion event detected` > 0, 1, 0)
+
+# ESSENTIAL
+Essential <- as.factor(ds$`Cellular Essential`)
+Essential <- ifelse(ds$`Cellular Essential` == "Essential", 1, 0)
+
+# EMBRYONIC EXPRESSION
+EmbryonicExpression <- as.numeric(ds$all_stages_PercentileRank)
+
+# pLI and OE
+pLI <- as.numeric(ds$`pLI of Orthologs`)
+oe <- as.numeric(ds$`oe of Orthologs`)
+
+# CHROMOSOMAL POSITION
+RelativeChromosomalLocation <- as.numeric(ds$`Relative Chromosomal Position`)
+
+# METHYLATION/ACETYLATION
+Acetylated = ifelse(ds$acetylation > 0, 1, 0) # acetylation as a binary variable
+Methylated = ifelse(ds$methylation > 0, 1, 0) # methylation as a binary variable
+
+# STAINING
+GramPositiveStain <- ifelse(ds$`Staining Overlap` != 'gneg', 1, 0)
+
+# OMIM
+OmimAnnotation <- as.factor(ds$`Has Omim Annotation`)
+OmimAnnotation <- ifelse(ds$`Has Omim Annotation` == "t", 0, 1)
+
+```
+
+```{r model, echo=FALSE}
+# generate the models
+
+without_essentiality <- glm(Founders ~ EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GramPositiveStain+OmimAnnotation, data=ds)
+with_essentiality <- glm(Founders ~ Essential+EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GramPositiveStain+OmimAnnotation, data=ds)
+
+print("GLM Without Essentiality")
+print(summary(without_essentiality),digits=6)
+print("GLM Including Essentiality")
+print(summary(with_essentiality),digits=6)
+
+print("Odds for GLM Without Essentiality:")
+print(exp(without_essentiality$coefficients))
+print("Odds for GLM Including Essentiality:")
+print(exp(with_essentiality$coefficients))
+
+#plot_summs(without_essentiality, with_essentiality, plot.distributions = TRUE, colors= "Greys", model.names=c("Without Essentiality", "With Essentiality"), ci_level = 0.95, exp=TRUE)
+
+without_essentiality_frame <- data.frame(Variable = rownames(summary(without_essentiality)$coef)[2:length(without_essentiality$coef)],
+                                         Odds = exp(summary(without_essentiality)$coef[, 1][2:length(without_essentiality$coef)]),
+                                         SE = summary(without_essentiality)$coef[, 2][2:length(without_essentiality$coef)],
+                                         Model = "Without Essentiality")
+
+with_essentiality_frame <- data.frame(Variable = rownames(summary(with_essentiality)$coef)[2:length(with_essentiality$coef)],
+                                         Odds = exp(summary(with_essentiality)$coef[, 1][2:length(with_essentiality$coef)]),
+                                         SE = summary(with_essentiality)$coef[, 2][2:length(with_essentiality$coef)],
+                                         Model = "With Essentiality")
+
+# reorder factor levels
+without_essentiality_frame$Variable <- factor(without_essentiality_frame$Variable, 
+                                              levels = c("EmbryonicExpression", "pLI", "oe", "Methylated", "Acetylated", "GramPositiveStain", "RelativeChromosomalLocation", "OmimAnnotation"))
+with_essentiality_frame$Variable <- factor(with_essentiality_frame$Variable, 
+                                              levels = c("Essential", "EmbryonicExpression", "pLI", "oe", "Methylated", "Acetylated", "GramPositiveStain", "RelativeChromosomalLocation", "OmimAnnotation"))
+
+both_models <- data.frame(rbind(without_essentiality_frame, with_essentiality_frame))
+
+interval1 <- -qnorm((1-0.9)/2)  # 90% multiplier
+interval2 <- -qnorm((1-0.95)/2)  # 95% multiplier
+
+zp1 <- ggplot(both_models, aes(colour = Model))
+zp1 <- zp1 + geom_hline(yintercept = 1, colour = gray(1/2), lty = 2)
+zp1 <- zp1 + geom_linerange(aes(x = Variable, ymin = Odds - SE*interval1,
+                                ymax = Odds + SE*interval1),
+                            lwd = 1, position = position_dodge(width = 1/2))
+zp1 <- zp1 + geom_pointrange(aes(x = Variable, y = Odds, ymin = Odds - SE*interval2,
+                                 ymax = Odds + SE*interval2),
+                             lwd = 1/2, position = position_dodge(width = 1/2),
+                             shape = 21, fill = "WHITE")
+zp1 <- zp1 + coord_flip() + theme_bw() + scale_color_manual(values = c("#b0b0b0", "#545454")) + theme(axis.title.y = element_blank()) 
+
+print(zp1)
+
+png('GLM_2021-04-05.png')
+plot(zp1)
+dev.off() -> .
+
+```
+

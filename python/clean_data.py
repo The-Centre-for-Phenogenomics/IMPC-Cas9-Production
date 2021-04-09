@@ -115,6 +115,7 @@ def filterData(joinedData, viabilityReport):
     excludingString += "\nGenotype is confirmed but Allele QC data is missing"
     excludingString += "\nAllele Type is set and is not Deletion"
     excludingString += "\nAllele Subtype is Indel"
+    excludingString += "\nZygote does not start with C57BL/6N*"
     excludingString += "\n"
     print(excludingString)
 
@@ -794,7 +795,7 @@ def addCorrections(cleanData, correctionData):
             if attemptRow.iloc[0]['#Founders Selected For Breeding'] != row['#Founders Selected For Breeding']:
                 cleanData.loc[cleanData['Mi Attempt URL'] == attemptURL, '#Founders Selected For Breeding'] = row['#Founders Selected For Breeding']
         else:
-            print("Error: correction row not found in clean data set, will not update")
+            print("Error: correction row for "+str(attempURL)+" not found in clean data set, will not update")
 
     return
 
@@ -1200,6 +1201,8 @@ def main():
     else:
         outdir = args.output
 
+    input_basename = os.path.splitext(os.path.basename(args.input.name))[0]
+
     if os.path.isdir(outdir):
         sys.exit("Output directory already exists. Please delete it or provide a different outdir")
 
@@ -1208,7 +1211,7 @@ def main():
     joinedData = joinData(imitsData)
 
     # store all successful experiments from iMits
-    gltExcel = pd.ExcelFile('annotation/20190610_mi_attempts_list.xlsx', engine='openpyxl')
+    gltExcel = pd.ExcelFile('annotation/mi_attempts_list_20201009.xlsx', engine='openpyxl')
     gltData = pd.read_excel(gltExcel, "All GLT")
     successGenes, successAttempts = getSuccesses(gltData)
 
@@ -1235,7 +1238,7 @@ def main():
     filteredData = filterData(joinedData, viabilityReport)
 
     # remove the non protein-coding genes
-    proteinCodingGenes = pd.read_csv('annotation/protein-coding-mgi_14-02-2021.csv')
+    proteinCodingGenes = pd.read_csv('annotation/genelists/protein-coding-mgi_14-02-2021.csv')
     filteredData = removeNonProteinCoding(filteredData, proteinCodingGenes)
 
     # remove duplicates (complete duplicates this is, exact same attempt and colony
@@ -1249,7 +1252,6 @@ def main():
     derivedData = addCalculatedColumns(filteredData_duplicatesRemoved, viabilityReport, essentialityReport)
 
     # add gene-related information
-    #TODO: regenerate this annotation info
     geneInfoFile = pd.ExcelFile('annotation/AnnotationInfo.xlsx', engine='openpyxl')
     geneInfo = pd.read_excel(geneInfoFile, 'Sheet1')
     addGeneAnalysis(derivedData, geneInfo)
@@ -1329,7 +1331,7 @@ def main():
         duplicateAttempts.to_excel(os.path.join(outdir, duplicateAttemptsFile), index=False)
         # now remove them, they will be identical records
         # excepting potentially the Allele Type/Subtype which aren't used in analysis anyways
-        print("(They will be removed)")
+        print("(They will be removed)\n")
         cleanData = cleanData.drop_duplicates(subset='Mi Attempt URL')
         # N.B. this is done BEFORE the repeated genes are removed
         # these attempts will be incorrectly marked as repeated otherwise
@@ -1339,7 +1341,7 @@ def main():
     repeatedAttempts = repeatedAttempts.drop(['datetime'], axis=1)  # remove the datetime column
 
     # export as both an excel and csv
-    repeatedAttemptFile = "Repeats-IMPC_Cas9_2020-10-09"
+    repeatedAttemptFile = "Repeats-"+str(input_basename)
     repeatedAttempts.to_excel(os.path.join(outdir, repeatedAttemptFile + ".xlsx"), index=False)
     repeatedAttempts.to_csv(os.path.join(outdir, repeatedAttemptFile + ".csv"), index=False)
 
@@ -1347,7 +1349,7 @@ def main():
     repeatedGenesRemoved = removeRepeatedGenes(cleanData, successGenes)
 
     # export clean data with the repeats removed
-    cleanDataFile = "Clean-IMPC_Cas9_2020-10-09"
+    cleanDataFile = "Clean-"+str(input_basename)
     repeatedGenesRemoved = repeatedGenesRemoved.drop(['datetime'], axis=1)  # not needed 
     repeatedGenesRemoved.to_excel(os.path.join(outdir, cleanDataFile + ".xlsx"), index=False)
     repeatedGenesRemoved.to_csv(os.path.join(outdir, cleanDataFile + ".csv"), index=False)
