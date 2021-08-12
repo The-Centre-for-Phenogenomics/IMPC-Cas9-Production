@@ -1,24 +1,28 @@
 ---
 title: "April 2021 Cas9 Production"
-date: "April 4th, 2021"
+date: "April 14th, 2021"
 output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy.opts=list(width.cutoff=65), tidy=TRUE)
 library(readxl)
 library(ggplot2)
 library(ggpubr)
 library(dplyr)
 library(jtools)
+library(formatR)
 
+setwd("/home/helrick/Projects/sickkids/cas9-production")
 dataset = read_excel("Clean-IMPC_Cas9_2021_03_annotated.xlsx")
 ```
 
-```{r cleaning}
+## Preparing Data 
 
-# add annotations and then check the covariance
-# subset to columns of interest
+### Columns of Interest
+First, subset the data to only the columns of interest 
+```{r subset}
 variables <- c("#G0 deletion event detected",
                "Founder Rate (per Embryos Transferred)",
                "Cellular Essential",
@@ -32,16 +36,27 @@ variables <- c("#G0 deletion event detected",
                "AverageH3K27ac_PeakScore",
                "all_stages_PercentileRank")
 ds <- dataset[variables]
-nrow(ds) # before removing NAs
+num_rows <- nrow(ds)
+```
 
+### Remove NAs and Inconsistencies
+
+Initially there are `r num_rows` rows in the dataset. For analysis, remove rows with NAs in any of the following:
+
+* Cellular Essential
+* pLI of Human Orthologs
+* oe of Human Orthologs
+* Staining overlap (Gram positive)
+* Embryonic expression
+
+Or experiments that are both Methylated and Acetylated.
+```{r cleanup}
 # remove rows with NA values in the following fields:
-ds<- ds[complete.cases(ds$`Cellular Essential`),]
+ds <- ds[complete.cases(ds$`Cellular Essential`),]
 ds <- ds[complete.cases(ds$`pLI of Orthologs`),]
 ds <- ds[complete.cases(ds$`oe of Orthologs`),]
 ds <- ds[complete.cases(ds$`Staining Overlap`),]
 ds <- ds[complete.cases(ds$`all_stages_PercentileRank`),]
-
-nrow(ds) # after removing NAs
 
 # remove experiments that are both Methylated and Acetylated
 ds$acetylation <- as.numeric(ds$AverageH3K27ac_PeakScore)
@@ -50,53 +65,71 @@ ds$acetylation[is.na(ds$acetylation)] <- 0
 ds$methylation[is.na(ds$methylation)] <- 0
 ds <- subset(ds, !(ds$acetylation != 0 & ds$methylation != 0))
 
-# FOUNDERS IS OUTPUT
+num_rows <- nrow(ds) # after removing NAs
+```
+
+After cleanup, there are `r num_rows` rows in the dataset. 
+
+### Convert Variables to Numeric and Factor
+
+Next, the variables need to be converted to numeric or factor variables for input to the models.
+
+```{r convert}
+# output of model, founders indicates success
 Founders <- ifelse(ds$`#G0 deletion event detected` > 0, 1, 0)
 
-# ESSENTIAL
+# essentiality as binary
 Essential <- as.factor(ds$`Cellular Essential`)
 Essential <- ifelse(ds$`Cellular Essential` == "Essential", 1, 0)
-
-# EMBRYONIC EXPRESSION
-EmbryonicExpression <- as.numeric(ds$all_stages_PercentileRank)
-
-# pLI and OE
-pLI <- as.numeric(ds$`pLI of Orthologs`)
-oe <- as.numeric(ds$`oe of Orthologs`)
-
-# CHROMOSOMAL POSITION
-RelativeChromosomalLocation <- as.numeric(ds$`Relative Chromosomal Position`)
-
-# METHYLATION/ACETYLATION
-Acetylated = ifelse(ds$acetylation > 0, 1, 0) # acetylation as a binary variable
-Methylated = ifelse(ds$methylation > 0, 1, 0) # methylation as a binary variable
-
-# STAINING
+# histone modifications as binary variables 
+Acetylated = ifelse(ds$acetylation > 0, 1, 0)
+Methylated = ifelse(ds$methylation > 0, 1, 0)
+# staining as binary variable (gneg is 0, everything else is 1) 
 GramPositiveStain <- ifelse(ds$`Staining Overlap` != 'gneg', 1, 0)
-
-# OMIM
+# 'has OMIM annotation' as binary
 OmimAnnotation <- as.factor(ds$`Has Omim Annotation`)
 OmimAnnotation <- ifelse(ds$`Has Omim Annotation` == "t", 0, 1)
 
+# remaining to numeric
+EmbryonicExpression <- as.numeric(ds$all_stages_PercentileRank)
+pLI <- as.numeric(ds$`pLI of Orthologs`)
+oe <- as.numeric(ds$`oe of Orthologs`)
+RelativeChromosomalLocation <- as.numeric(ds$`Relative Chromosomal Position`)
 ```
 
-```{r model, echo=FALSE}
-# generate the models
+## Generate Models
 
+Create general linear models with and without essentiality.
+```{r models}
 without_essentiality <- glm(Founders ~ EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GramPositiveStain+OmimAnnotation, data=ds)
 with_essentiality <- glm(Founders ~ Essential+EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GramPositiveStain+OmimAnnotation, data=ds)
+```
 
-print("GLM Without Essentiality")
-print(summary(without_essentiality),digits=6)
-print("GLM Including Essentiality")
-print(summary(with_essentiality),digits=6)
+### GLM Statistics: Without Essentiality
 
-print("Odds for GLM Without Essentiality:")
-print(exp(without_essentiality$coefficients))
-print("Odds for GLM Including Essentiality:")
-print(exp(with_essentiality$coefficients))
+Model Statistics:
+```{r print_models_without, echo=FALSE}
+summary_without_essentiality <- summary(without_essentiality)
+print(summary_without_essentiality,digits=6)
+```
+Log Odds:
+```{r, echo=FALSE}
+stack(exp(without_essentiality$coefficients))
+```
 
-#plot_summs(without_essentiality, with_essentiality, plot.distributions = TRUE, colors= "Greys", model.names=c("Without Essentiality", "With Essentiality"), ci_level = 0.95, exp=TRUE)
+### GLM Statistics: With Essentiality
+Model Statistics:
+```{r print_models_with, echo=FALSE}
+summary_with_essentiality <- summary(with_essentiality)
+print(summary_with_essentiality,digits=6)
+```
+Log Odds:
+```{r, echo=FALSE}
+stack(exp(with_essentiality$coefficients))
+```
+
+## Plot Model Comparison
+```{r plots, echo=FALSE}
 
 without_essentiality_frame <- data.frame(Variable = rownames(summary(without_essentiality)$coef)[2:length(without_essentiality$coef)],
                                          Odds = exp(summary(without_essentiality)$coef[, 1][2:length(without_essentiality$coef)]),
@@ -132,9 +165,8 @@ zp1 <- zp1 + coord_flip() + theme_bw() + scale_color_manual(values = c("#b0b0b0"
 
 print(zp1)
 
-png('GLM_2021-04-05.png')
+png('GLM_2021-04-14.png')
 plot(zp1)
 dev.off() -> .
-
 ```
 
