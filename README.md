@@ -27,11 +27,16 @@
 	* cytoBand.txt - _cytogenic banding information from UCSC_
 	* mm10.chrom.sizes - _mm10 chromosome sizes from UCSC_
 
+* data - _data files_
+	* Clean-IMPC_Cas9_2020-10-09.csv _data file containing the latest attempt of each edited gene_
+	* ST3.csv _data file containing the repeated attempts of edited genes by each production centre_
+
 * python - _python code files_
 	* clean_data.py - _cleaning script_
 	* add_annotation_info.py - _add supplementary annotation information_
 
 * R - _R code files_
+	* Cas9Production_Stats_Analysis.Rnw _statistical analysis of data_
 	* Supplementary_GLM_Analysis.Rmd _supplementary analysis_
 
 ## Running
@@ -61,5 +66,7 @@ Then, to add additional annotation information for the supplementary R anaylsis 
 python3 python/add_annotation_info.py <previous-step-output>/Clean-<iMits-Cas9-YYYY-MM-DD>.xlsx <OutputFileName>.xlsx
 ```
 
-Finally, to run the Supplementary Analysis, open `Supplementary_GLM_Analysis.Rmd` in RStudio, install the listed packages, and Knit the document.
+Finally, to run:
+* Statistical Analysis,  open `Cas9Production_Stats_Analysis.Rnw` in RStudio, set working directory to source pane, install the listed packages, download the required data files, and Knit the document. 
+* Supplementary Analysis, open `Supplementary_GLM_Analysis.Rmd` in RStudio, install the listed packages, and Knit the document.
 

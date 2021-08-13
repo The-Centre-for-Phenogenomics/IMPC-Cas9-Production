@@ -1,0 +1,1504 @@
+%% LyX 2.2.1 created this file.  For more info, see http://www.lyx.org/.
+%% Do not edit unless you really know what you are doing.
+\documentclass{article}
+\usepackage[sc]{mathpazo}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{verbose,tmargin=2.5cm,bmargin=2.5cm,lmargin=2.5cm,rmargin=2.5cm}
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{2}
+\usepackage{url}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage[table]{xcolor}
+\usepackage{inconsolata}
+\usepackage{listings,color}
+\definecolor{firebrick}{rgb}{0.16, 0.32, 0.75}
+\usepackage[T1]{fontenc}
+\usepackage{underscore}
+\usepackage{array}
+\usepackage{longtable}
+\newcommand\textstyleStrongEmphasis[1]{\textbf{#1}}
+\makeatletter
+\newcommand\arraybslash{\let\\\@arraycr}
+\usepackage[unicode=true,pdfusetitle,
+bookmarks=true,bookmarksnumbered=true,bookmarksopen=true,bookmarksopenlevel=2,
+breaklinks=false,pdfborder={0 0 1},backref=false,colorlinks=false]{hyperref}
+\hypersetup{
+pdfstartview={XYZ null null 1}}
+\usepackage{breakurl}
+\linespread{1.15}
+\begin{document}
+%\SweaveOpts{concordance=TRUE}
+
+<<setup, include=FALSE, cache=FALSE>>=
+library(knitr)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(ggsci)
+library(ggbeeswarm)
+library(kableExtra)
+options(knitr.table.format = "latex")
+#library(moonBook)
+library(webr)
+#library(EMT)
+library(gridExtra)
+library(effects)
+#library(magrittr)
+#library(sjPlot)
+library(caret)
+library(glmnet)
+library(e1071)
+#library(polycor)
+#library(psych)
+# set global chunk options
+opts_chunk$set(fig.align='center', 
+               concordance=TRUE, 
+               fig.show='hold', 
+               size='footnotesize', 
+               prompt=FALSE, 
+               comment=NA, 
+               tidy=TRUE, 
+               results='asis', 
+               highlight=TRUE)
+opts_knit$set(concordance=TRUE, self.contained=FALSE)
+data_path <- file.path("..", "data")
+@
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Author: Elif F. Acar 
+% Contact: elif.acar@umanitoba.ca, elif.acar@sickkids.ca
+% Last Update: May 13, 2021
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\title{Assessment of Factors for Successful Gene Editing using CRISPR-Cas9 Technology}
+\author{Elif F. Acar}
+\date{}
+
+\maketitle
+
+\vspace{-1cm}
+
+
+\section*{Objective}
+
+The primary objective in this study is to determine the experimental factors affecting the germline transmission status and the founder rate of mutant mouse lines produced using the CRISPR-Cas9 technology. 
+
+
+
+\section*{Data}
+
+<<echo=FALSE, results='asis'>>=
+
+# Read data files: 
+
+dat <- read.csv(file.path(data_path, "Clean-IMPC_Cas9_2020-10-09.csv"), header=TRUE, na.strings = c("NA", ""), strip.white = TRUE) 
+dat  <-  as.data.frame(dat)
+
+repdat  <- read.csv(file.path(data_path, "ST3.csv"), header=TRUE, na.strings = c("NA", ""), strip.white = TRUE)
+repdat  <-  as.data.frame(repdat)
+
+
+# Convert them to tibbles:
+dat <- as_tibble(dat)
+repdat <- as_tibble(repdat)
+
+# Unify how gRNA.Concentrations.Individually.Set. is coded:
+repdat <- repdat %>% 
+  mutate(gRNA.Concentrations.Individually.Set. = ifelse(gRNA.Concentrations.Individually.Set.=="FALSE", "False", "True"))
+
+# Add the column "GeneSymbol_ProductionCentre" in the main dataset:
+dat <- dat %>% 
+  mutate(GeneSymbol_ProductionCentre = paste(Gene.Marker.Symbol, Production.Centre, sep="-"))
+
+# Add the columns specifying change in experimental factors in the main dataset:
+
+dat <- dat %>% 
+  mutate(Δ.Delivery.Method = NA,
+         Δ.mRNA.Concentration = NA,
+         Δ.Protein.Concentration = NA,
+         Δ.Cas9.Type = NA,
+         Δ.Sorted.Cut.Sites= NA,
+         Δ.Num.Guides =NA,
+         Δ.Guide.Seq=NA, 
+         Δ.Exon=NA)
+
+
+# Get columns that are mutual in both datasets:
+mutcol <- intersect(colnames(dat), colnames(repdat))
+
+# Recode the missing entries in ExperimentRepeated and SuccessfulAttemptExists columns as false:
+dat$RepeatedGene <- factor(dat$RepeatedGene, levels = c("f","t"))
+
+dat$ExperimentRepeated <- factor(dat$ExperimentRepeated, levels = c("f","t"))
+dat$ExperimentRepeated[is.na(dat$ExperimentRepeated)] <- "f"
+
+dat$SuccessfulAttemptExists <- factor(dat$SuccessfulAttemptExists, levels = c("f","t"))
+dat$SuccessfulAttemptExists[is.na(dat$SuccessfulAttemptExists)] <- "f"
+
+# Split the main dataset into two datasets: non-repeated (coredat) genes and the latest attempt of repeated genes (matchdat)
+matchdat <- dat[!is.na(match(dat$Gene.Marker.Symbol, repdat$Gene.Marker.Symbol)),] 
+coredat <- dat %>% filter(!Gene.Marker.Symbol %in% repdat$Gene.Marker.Symbol) 
+
+# Now, we can merge the repeat data with the core dataset keeping only the mutual columns: 
+repdat <- repdat %>%
+  mutate_if(sapply(repdat, is.factor), as.character)
+coredat <- coredat %>%
+  mutate_if(sapply(coredat, is.factor), as.character)
+alldat <- bind_rows(coredat[,mutcol], repdat[,mutcol])  
+alldat <- alldat %>%
+  mutate_if(sapply(alldat, is.character), as.factor) 
+
+# Define an indicator for "ExperimentRepeated" -- this can be different from the previously defined one. 
+alldat$ExperimentRepeated <- ifelse(alldat$Gene.Marker.Symbol %in% repdat$Gene.Marker.Symbol, TRUE, FALSE)
+
+@
+
+
+The study data after filtering consist of $\Sexpr{nrow(alldat)}$ experiments conducted at eight IMPC centres. The number of experiments at each centre, along with the number of genes edited in these experiments, is provided in Table~\ref{tab:centre}. 
+We observe that seven out of eight centres had multiple experimental attempts for some genes. Reported also are the proportions of experiments and genes repeated within each centre. 
+In total, there are $\Sexpr{length(unique(alldat$Gene.Marker.Symbol))}$ unique genes that were edited using the CRISPR-Cas9 technology. All genes were edited in only one center, except for two genes: {\tt Rpl5} was edited twice at BCM using electroporation and twice at WTSI using cytoplasmic injection; {\tt Ebf3} was edited twice at BCM using cytoplasmic injection and three times at Harwell using pronuclear injection twice and electroporation once.
+
+
+<<tab:center, echo=FALSE, results='asis'>>=
+# Obtain the table of counts per centre:
+
+tab1 <- alldat %>% 
+  group_by(Production.Centre) %>% 
+  add_count(Gene.Marker.Symbol) %>%
+  summarise(Experiments = n(), # number of experiments
+            Genes = n_distinct(Gene.Marker.Symbol), # number of unique genes within centre.
+            RepExp = sum(ExperimentRepeated),# number of genes repeated within centre.
+            RepGene = n_distinct(Gene.Marker.Symbol[ExperimentRepeated==TRUE])) %>% # number of experiments repeated within centre.
+  mutate(RepExp = round(RepExp/Experiments*100,1) , RepGene = round(RepGene/Genes*100,1))
+
+# now add totals:
+tab1 <- bind_rows(tab1, alldat %>% 
+                    summarise(Experiments = n(), 
+                              Genes = n_distinct(Gene.Marker.Symbol), 
+                              RepExp = sum(ExperimentRepeated),
+                              RepGene = n_distinct(Gene.Marker.Symbol[ExperimentRepeated==TRUE])) %>% 
+                    mutate(RepExp = round(RepExp/Experiments*100,1) , RepGene = round(RepGene/Genes*100,1)))
+tab1 <- t(tab1)
+
+rownames(tab1) <- c( "Centre", "Number of Experiments", "Number of Genes", "\\% Repeated Experiments", "\\% Repeated Genes")
+colnames(tab1) <- c(tab1[1,1:8], "Total")
+tab1 <- tab1[-1,]
+
+kable(tab1, align= c(rep("c",8),"c"),
+      booktabs = TRUE,  caption = "\\label{tab:centre} The number of experiments and of genes across the eight IMPC centers (in alphabetical order), as well as in total. Reported also are the proportions of experiments and genes repeated within each centre.", escape =
+        FALSE ) %>% 
+  kable_styling( latex_options = "hold_position", fixed_thead = T, full_width = FALSE, font_size = 8.5) %>%
+  row_spec(0, bold=TRUE) %>%
+  column_spec(1, bold=TRUE) %>%
+  collapse_rows(columns = 1)
+
+# Check manually if any gene is edited by more than one center:
+# tab.gene_center <- table(alldat$Gene.Marker.Symbol, alldat$Production.Centre)
+# alldat[alldat$Gene.Marker.Symbol %in% names(which(apply(tab.gene_center,1, function(x) length(x[x>0])) >1)), c("Gene.Marker.Symbol","Mi.Date","Production.Centre","Delivery.Method","GLT")]
+
+@ 
+
+
+
+\medskip
+
+The success of Cas9 gene editing is evaluated based on the germline transmission (GLT) status and the founder rate (FR). 
+There are $\Sexpr{sum(is.na(alldat$GLT))}$ experiments that are in progress, hence their GLT status is unknown. 
+We exclude these experiments from our investigations and focus on the complete cases for which the GLT status is known.  
+
+<<echo=FALSE, results='asis'>>=
+
+# Remove the rows with unknown GLT status in the main dataset:
+dat <- dat[!is.na(dat$GLT),]
+dat <- droplevels.data.frame(dat)
+
+# Remove the rows with unknown GLT status in the merged dataset:
+mergedat <- alldat[!is.na(alldat$GLT),]
+mergedat <- droplevels.data.frame(mergedat)
+
+# Let's define an indicator for "ExperimentRepeated" -- this can be different from the previously defined one. 
+mergedat$ExperimentRepeated <- ifelse(mergedat$Gene.Marker.Symbol %in% repdat$Gene.Marker.Symbol, TRUE, FALSE)
+
+
+@ 
+
+
+
+
+\section*{Evaluation of Factors Associated with Success in Gene Editing}
+
+We investigate the impact of genomic and experimental factors on the FR and the GLT status using the data on the $\Sexpr{length(unique(dat$Gene.Marker.Symbol))}$ genes. For genes with multiple attempts at the same center, we consider only the latest attempt with a known GLT status. 
+
+\bigskip
+
+
+\subsection*{Evaluation of Genomic Factors}
+
+
+The genomic factors of interest are the cellular essentiality and lethality of genes.
+We first examine whether the FR differs between essential and non-essential genes, and between lethal and non-lethal genes. 
+The essentiality and lethality information was available for $\Sexpr{sum(!is.na(dat$Cellular.Essential))}$ and $\Sexpr{sum(!is.na(dat$Viability.Consensus))}$ genes, respectively. 
+Table~\ref{tab:gene} gives the number of essential and lethal genes at each chromosome. 
+
+\bigskip
+
+<<tab:gene, echo=FALSE, results='asis'>>=
+
+tab2 <- dat %>% 
+  mutate(Chromosome = factor(Chromosome....strand.,  levels = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","x","y"))) %>% 
+  group_by(Chromosome) %>% 
+  summarise(Genes = n(), 
+            Essn = sum(Cellular.Essential=="Essential", na.rm=T), 
+            NEssn = sum(Cellular.Essential=="Non-essential", na.rm=T), 
+            UEssn = sum(is.na(Cellular.Essential)),
+            Let = sum(Viability.Consensus=="Lethal", na.rm=T), 
+            NLet = sum(Viability.Consensus=="Non-Lethal", na.rm=T), 
+            ULet = sum(is.na(Viability.Consensus)))
+
+
+# now add totals:
+tab2 <- bind_rows(tab2, Total=dat %>% 
+                    summarise(Genes = n(), 
+                              Essn = sum(Cellular.Essential=="Essential", na.rm=T), 
+                              NEssn = sum(Cellular.Essential=="Non-essential", na.rm=T), 
+                              UEssn = sum(is.na(Cellular.Essential)),
+                              Let = sum(Viability.Consensus=="Lethal", na.rm=T), 
+                              NLet = sum(Viability.Consensus=="Non-Lethal", na.rm=T), 
+                              ULet = sum(is.na(Viability.Consensus))))
+
+tab2 <- as.data.frame(tab2)
+colnames(tab2) <- c("Chromosome", "Num.of Genes", "Essential", "Non-essential", "Unknown", "Lethal", "Non-lethal", "Unknown")
+tab2$Chromosome <- factor(tab2$Chromosome, levels= c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","x","y", "Total"))
+tab2$Chromosome[22] <- "Total" 
+
+kable(tab2, align= rep("c",8),
+      booktabs = TRUE,  caption = "\\label{tab:gene} The number of genes across chromosomes and their distribution based on essentiality and lethality.", escape =
+        FALSE ) %>% 
+  kable_styling( latex_options = "hold_position", fixed_thead = T, full_width = FALSE, font_size = 8) %>%
+  add_header_above(c(" " = 2, "Essentiality" = 3, "Lethality" = 3))%>%
+  row_spec(0, bold=TRUE) %>%
+  row_spec(21, hline_after = T) %>%
+  column_spec(1, bold=TRUE) 
+
+
+@ 
+
+
+
+
+
+
+<<echo=FALSE, results='asis'>>=
+
+subdat <- dat %>% 
+  select(Gene.Type = Cellular.Essential, 
+         Viability = Viability.Consensus,
+         Delivery.Method = Delivery.Method,
+         Num.Guides = Num.Guides,
+         Cut.Size = Max.Cut.size,
+         Founders.Breeding = X.Founders.Selected.For.Breeding,
+         Birth.Rate = Birth.Rate,
+         Founder.Rate = Founder.Rate..per.Embryos.Transferred., 
+         GLT) %>%
+  mutate(Viability = factor(Viability, levels=c("Non-Lethal", "Lethal"))) %>%
+  mutate(GLT = factor(GLT, levels=c("t", "f"), labels = c("T", "F"))) %>%
+  mutate(Gene.Type = factor(Gene.Type, levels=c("Non-essential", "Essential"))) %>%
+  mutate(Delivery.Method = factor(Delivery.Method, levels=c("Cytoplasmic Injection", "Electroporation" , "Pronuclear Injection"))) 
+
+
+@
+
+
+\subsubsection*{Comparisons of Founder and GLT Rates of Essential and Non-essential Genes}
+
+
+<<echo=FALSE, results='asis'>>=
+
+# Do essential and non-essential genes differ in terms of their GLT status?
+
+sum_glt <- subdat %>%
+  filter(complete.cases(Gene.Type)) %>%  # use only those with known gene type
+  filter(Founder.Rate>0) %>%  # use only those with a positive founder rate
+  group_by(Gene.Type, GLT) %>% 
+  summarise(n=n(), .groups = 'drop_last') %>%
+  mutate(GLT.Rate = n/sum(n))
+
+glt_test <- prop.test(c(sum_glt$n[1], sum_glt$n[3]), c(sum(sum_glt$n[1:2]), sum(sum_glt$n[3:4])))
+
+
+# Do essential and non-essential genes differ in terms of their FR?
+
+subdat_fr <- subdat %>%
+  filter(complete.cases(Gene.Type)) %>%  # use only those with known gene type
+  group_by(Gene.Type) %>% 
+  mutate(n = n()) %>% 
+  mutate(label = paste0('\nN = ',n))
+
+nlabel <- unique(subdat_fr$label)
+
+fr_test <-  wilcox.test(subdat$Founder.Rate~subdat$Gene.Type)  
+
+fr_med <- subdat_fr %>% 
+  select(Founder.Rate, Gene.Type) %>% 
+  group_by(Gene.Type) %>% 
+  summarise(median = median(Founder.Rate)) 
+
+@
+
+
+
+
+Figure~\ref{fig:essen} displays the distribution of the founder rates (FR) for non-essential and essential genes. 
+The Wilcoxon rank sum test suggests a significant difference (p-value = $\Sexpr{round(fr_test$p.value,3)}$) between the median FR of non-essential (median = $\Sexpr{round(fr_med[1,2],3)}$) and essential genes (median = $\Sexpr{round(fr_med[2,2],3)}$). 
+Hence, we conclude that gene editing using Cas9 is more successful for non-essential genes than essential genes.
+We also compared the germline transmission (GLT) rates of non-essential and essential genes focusing on the experiments where a positive FR is obtained.However, the Pearson chi-square test indicated no significant difference (p-value = $\Sexpr{round(glt_test$p.value,3)}$) between the GLT rates of non-essential (GLT $=\Sexpr{round(glt_test$estimate[1],3)}$) and essential (GLT $=\Sexpr{round(glt_test$estimate[2],3)}$) genes. 
+
+
+
+
+<<essen, echo=FALSE, results='asis', fig.cap="FR of non-essential and essential genes.", fig.width = 7, fig.height = 5, fig.pos="!htb", out.width="65%">>=
+
+
+# subdat_fr %>%
+#   ggboxplot(x = "Gene.Type", 
+#             y = "Founder.Rate",
+#             add = "jitter") + 
+#   stat_compare_means(aes(group = Gene.Type), 
+#                      label = "p.format", 
+#                      colour="black", label.y = max(subdat$Founder.Rate)*1.05, 
+#                      label.x = 1.4) +
+#   theme(legend.position="none") + 
+#   labs(x = "", y = "Founder Rate") +  
+#   coord_cartesian(ylim=c(0,0.6), xlim=c(1,2), clip="off") +
+#   annotate("text", x=c(1,2), y=-0.06, label= nlabel) +
+#   geom_segment(aes(x = 1.1, y = 0.45, xend = 1.1, yend = 0.46), colour="black", linetype= 1)+
+#   geom_segment(aes(x = 1.9, y = 0.45, xend = 1.9, yend = 0.46), colour="black", linetype= 1)+
+#   geom_segment(aes(x = 1.1, y = 0.46, xend = 1.9, yend = 0.46), colour="black", linetype= 1)
+
+
+ggplot(subdat_fr, aes(x = Gene.Type, y = Founder.Rate)) +
+  geom_violin(fill="gray") +
+  geom_boxplot(width=0.1, outlier.shape = NA) +
+  stat_compare_means(aes(group = Gene.Type),
+                     label = "p.format",
+                     colour="black", label.y = max(subdat$Founder.Rate)*1.08,
+                     label.x = 1.4) +
+  theme_classic() +
+  labs(x = "", y = "Founder Rate") +
+  coord_cartesian(ylim=c(0,0.6), xlim=c(1,2), clip="off") +
+  annotate("text", x=c(1,2), y=-0.06, label= nlabel) +
+  geom_segment(aes(x = 1.1, y = 0.48, xend = 1.1, yend = 0.50), colour="black", linetype= 1)+
+  geom_segment(aes(x = 1.9, y = 0.48, xend = 1.9, yend = 0.50), colour="black", linetype= 1)+
+  geom_segment(aes(x = 1.1, y = 0.50, xend = 1.9, yend = 0.50), colour="black", linetype= 1)
+
+
+@
+
+
+
+
+
+\subsubsection*{Comparisons of Founder and GLT Rates of Lethal and Non-lethal Genes}
+
+
+<<echo=FALSE, results='asis'>>=
+
+# Do lethal and non-lethal genes differ in terms of their GLT status?
+
+sum_glt <- subdat %>%
+  filter(complete.cases(Viability)) %>%  # use only those with known gene type
+  filter(Founder.Rate>0) %>%  # use only those with a positive founder rate
+  group_by(Viability, GLT) %>% 
+  summarise(n=n(), .groups = 'drop_last') %>% 
+  mutate(GLT.Rate = n/sum(n))
+
+
+suppressWarnings( 
+  glt_test <- prop.test(c(sum_glt$n[1], sum_glt$n[3]), c(sum(sum_glt$n[1:2]), sum(sum_glt$n[3:4])))
+)
+
+
+
+# Do lethal and non-lethal genes differ in terms of their FR ?
+
+subdat_fr <- subdat %>%
+  filter(complete.cases(Viability)) %>%  # use only those with known gene type
+  group_by(Viability) %>% 
+  mutate(n = n()) %>% 
+  mutate(label = paste0('\nN = ',n))
+
+nlabel <- unique(subdat_fr$label) # also check manually
+
+fr_test <-  wilcox.test(subdat$Founder.Rate~subdat$Viability)  
+
+fr_med <- subdat_fr %>% 
+  select(Founder.Rate, Viability) %>% 
+  group_by(Viability) %>% 
+  summarise(median = median(Founder.Rate)) 
+
+@
+
+
+
+Similarly, we compared the FR for non-lethal and lethal genes. 
+As can be seen in Figure~\ref{fig:lethal}, the median FR for non-lethal genes (median = $\Sexpr{round(fr_med[1,2],3)}$) is higher than that of lethal genes (median=$\Sexpr{round(fr_med[2,2],3)}$), with a significant difference based on the Wilcoxon rank sum test (p-value = $\Sexpr{round(fr_test$p.value,3)}$).
+However, the Pearson chi-square test indicated no significant difference (p-value = $\Sexpr{round(glt_test$p.value,3)}$) between the GLT rates of non-lethal (GLT $=\Sexpr{round(glt_test$estimate[1],3)}$) and lethal (GLT $=\Sexpr{round(glt_test$estimate[2],3)}$) genes. 
+Note that there are only very few genes that had the viability information but did not have GLT. 
+As a result, the estimated GLT rates are both very high (over $99\%$). 
+
+<<lethal, echo=FALSE, results='asis', fig.cap="FR of non-lethal and lethal genes.", fig.width = 7, fig.height = 5, fig.pos="!htb", out.width="65%">>=
+
+
+# subdat_fr %>%
+#   ggboxplot(x = "Viability", 
+#             y = "Founder.Rate",
+#             add = "jitter") + 
+#   stat_compare_means(aes(group = Viability), 
+#                      label = "p.format", 
+#                      colour="black", 
+#                      label.y = max(subdat$Founder.Rate)*1.1,
+#                      label.x = 1.4) +
+#   theme(legend.position="none") + 
+#   labs(x = "", y = "Founder Rate") +  
+#   coord_cartesian(ylim=c(0,0.65), xlim=c(1,2), clip="off") +
+#   annotate("text", x=c(1,2), y=-0.06, label=nlabel) +
+#   geom_segment(aes(x = 1.1, y = 0.48, xend = 1.1, yend = 0.50), colour="black", linetype= 1)+
+#   geom_segment(aes(x = 1.9, y = 0.48, xend = 1.9, yend = 0.50), colour="black", linetype= 1)+
+#   geom_segment(aes(x = 1.1, y = 0.50, xend = 1.9, yend = 0.50), colour="black", linetype= 1)
+
+ggplot(subdat_fr, aes(x = Viability, y = Founder.Rate)) +
+  geom_violin(fill="gray") +
+  geom_boxplot(width=0.1, outlier.shape = NA) +
+  stat_compare_means(aes(group = Viability),
+                     label = "p.format",
+                     colour="black", label.y = max(subdat$Founder.Rate)*1.08,
+                     label.x = 1.4) +
+  theme_classic() +
+  labs(x = "", y = "Founder Rate") +
+  coord_cartesian(ylim=c(0,0.6), xlim=c(1,2), clip="off") +
+  annotate("text", x=c(1,2), y=-0.06, label= nlabel) +
+  geom_segment(aes(x = 1.1, y = 0.48, xend = 1.1, yend = 0.50), colour="black", linetype= 1)+
+  geom_segment(aes(x = 1.9, y = 0.48, xend = 1.9, yend = 0.50), colour="black", linetype= 1)+
+  geom_segment(aes(x = 1.1, y = 0.50, xend = 1.9, yend = 0.50), colour="black", linetype= 1)
+
+
+
+
+@
+
+
+
+
+\subsubsection*{Comparisons of Birth Rates based on Gene Essentiality and Gene Lethality}
+
+<<echo=FALSE, results='asis'>>=
+
+# Birth Rate comparison of Essential vs Non-essential genes
+
+subdat_br1 <- subdat  %>% 
+  filter(complete.cases(Gene.Type)) %>%  # use only those with known gene type
+  group_by(Gene.Type) %>% 
+  mutate(n = n()) %>% 
+  mutate(label = paste0('\nN = ',n))
+
+nlabel1 = unique(subdat_br1$label)
+
+br_med_essen <- subdat_br1 %>% 
+  select(Birth.Rate, Gene.Type) %>% 
+  group_by(Gene.Type) %>% 
+  summarise(median = median(Birth.Rate)) 
+
+
+
+# Birth Rate comparison of Lethal vs Non-lethal genes
+
+subdat_br2 <- subdat %>%
+  filter(complete.cases(Viability)) %>%  # use only those with known gene type
+  group_by(Viability) %>% 
+  mutate(n = n()) %>% 
+  mutate(label = paste0('\nN = ',n))
+
+nlabel2 = unique(subdat_br2$label)
+
+
+br_med_lethal <- subdat_br2 %>% 
+  select(Birth.Rate, Viability) %>% 
+  group_by(Viability) %>% 
+  summarise(median = median(Birth.Rate)) 
+
+
+@
+
+
+
+
+In addition to the FR and GLT rate, we also compared the birth rates (BR) of essential and non-essential genes, and of lethal and non-lethal genes. 
+We concluded from Figure~\ref{fig:birth} that non-essential genes (median = $\Sexpr{round(br_med_essen[1,2],3)}$) have a significantly higher birth rate than essential genes (median = $\Sexpr{round(br_med_essen[2,2],3)}$). 
+Similarly, non-lethal genes (median = $\Sexpr{round(br_med_lethal[1,2],3)}$) were found to have a higher birth rate than lethal genes (median = $\Sexpr{round(br_med_lethal[2,2],3)}$). 
+
+
+<<birth, echo=FALSE, results='asis', fig.cap="BR of non-essential and essential genes (left) and of non-lethal and lethal genes (right).", fig.width = 14, fig.height = 5, fig.pos="!htb", out.width="95%">>=
+
+
+# p1 <- subdat_br1  %>% 
+#   ggboxplot(x = "Gene.Type", 
+#             y = "Birth.Rate",
+#             add = "jitter") + 
+#   stat_compare_means(aes(group = Gene.Type), 
+#                      label = "p.format", 
+#                      colour="black",
+#                      label.y = max(subdat_br1$Birth.Rate)*1.05, 
+#                      label.x = 1.4 ) +
+#   theme(legend.position="none") + 
+#   labs(x = "", y = "Birth Rate") +  
+#   coord_cartesian(ylim=c(0,0.95), xlim=c(1,2), clip="off") +
+#   annotate("text", x=c(1,2), y=-0.09, label=nlabel1) +
+#   geom_segment(aes(x = 1.1, y = 0.68, xend = 1.1, yend = 0.70),  colour="black", linetype= 1) +
+#   geom_segment(aes(x = 1.9, y = 0.68, xend = 1.9, yend = 0.70), colour="black", linetype= 1)  +
+#   geom_segment(aes(x = 1.1, y = 0.70, xend = 1.9, yend = 0.70), colour="black", linetype= 1)
+
+
+
+p1 <- ggplot(subdat_br1, aes(x = Gene.Type, y = Birth.Rate)) +
+  geom_violin(fill="gray") +
+  geom_boxplot(width=0.1, outlier.shape = NA) +
+  stat_compare_means(aes(group = Gene.Type),
+                     label = "p.format",
+                     colour="black", label.y = max(subdat_br1$Birth.Rate)*1.03,
+                     label.x = 1.4) +
+  theme_classic() +
+  labs(x = "", y = "Birth Rate") +
+  coord_cartesian(ylim=c(0,0.95), xlim=c(1,2), clip="off") +
+  annotate("text", x=c(1,2), y=-0.09, label=nlabel1) +
+  geom_segment(aes(x = 1.1, y = 0.79, xend = 1.1, yend = 0.85),  colour="black", linetype= 1) +
+  geom_segment(aes(x = 1.9, y = 0.79, xend = 1.9, yend = 0.85), colour="black", linetype= 1)  +
+  geom_segment(aes(x = 1.1, y = 0.85, xend = 1.9, yend = 0.85), colour="black", linetype= 1)
+
+
+
+# p2 <-subdat_br2  %>% 
+#   ggboxplot(x = "Viability", 
+#             y = "Birth.Rate",
+#             add = "jitter") + 
+#   stat_compare_means(aes(group = Viability), 
+#                      label = "p.format", 
+#                      colour="black",
+#                      label.y = max(subdat_br2$Birth.Rate)*1.05,
+#                      label.x = 1.4) +
+#   theme(legend.position="none") + 
+#   labs(x = "", y = "Birth Rate") +  
+#   coord_cartesian(ylim=c(0,0.95), xlim=c(1,2), clip="off") +
+#   annotate("text", x=c(1,2), y=-0.09, label=nlabel2) + 
+#   geom_segment(aes(x = 1.1, y = 0.68, xend = 1.1, yend = 0.70),  colour="black", linetype= 1)+
+#   geom_segment(aes(x = 1.9, y = 0.68, xend = 1.9, yend = 0.70), colour="black", linetype= 1)+
+#   geom_segment(aes(x = 1.1, y = 0.70, xend = 1.9, yend = 0.70), colour="black", linetype= 1)
+
+
+p2 <- ggplot(subdat_br2, aes(x = Viability, y = Birth.Rate)) +
+  geom_violin(fill="gray") +
+  geom_boxplot(width=0.1, outlier.shape = NA) +
+  stat_compare_means(aes(group = Viability),
+                     label = "p.format",
+                     colour="black", label.y = max(subdat_br2$Birth.Rate)*1.08,
+                     label.x = 1.4) +
+  theme_classic() +
+  labs(x = "", y = "Birth Rate") +
+  coord_cartesian(ylim=c(0,0.95), xlim=c(1,2), clip="off") +
+  annotate("text", x=c(1,2), y=-0.09, label=nlabel2) +
+  geom_segment(aes(x = 1.1, y = 0.72, xend = 1.1, yend = 0.76),  colour="black", linetype= 1) +
+  geom_segment(aes(x = 1.9, y = 0.72, xend = 1.9, yend = 0.76), colour="black", linetype= 1)  +
+  geom_segment(aes(x = 1.1, y = 0.76, xend = 1.9, yend = 0.76), colour="black", linetype= 1)
+
+
+gridExtra::grid.arrange(p1, p2, ncol=2)
+
+
+@
+
+
+
+
+
+
+
+
+
+
+
+\subsection*{Evaluation of Experimental Factors}
+
+The experimental factors that are of interest are the delivery method (cytoplasmic injection, electroporation and pronuclear injection), number of guides (2 Guides versus 4 Guides),  deletion size (ranging from $\Sexpr{min(subdat$Cut.Size)}$ to $\Sexpr{max(subdat$Cut.Size)}$) and number of founders selected for breeding (ranging from $0$ to $16$).
+
+\subsubsection*{Comparisons of Founder and GLT Rates based on Delivery Method}
+
+
+
+<<echo=FALSE, results='asis'>>=
+
+# How does the delivery method affect the GLT status?
+
+sum_glt <- subdat %>%
+  filter(Founder.Rate>0) %>%
+  filter(complete.cases(Delivery.Method)) %>%  # use only those with known gene type
+  group_by(Delivery.Method, GLT) %>% 
+  summarise(n=n(), .groups = 'drop_last') %>%
+  mutate(GLT.Rate = n/sum(n))
+
+suppressWarnings( 
+  glt_pval <- c(
+    prop.test(c(sum_glt$n[1], sum_glt$n[3]), c(sum(sum_glt$n[1:2]), sum(sum_glt$n[3:4])))$p.value,
+    prop.test(c(sum_glt$n[3], sum_glt$n[5]), c(sum(sum_glt$n[3:4]), sum(sum_glt$n[5:6])))$p.value,
+    prop.test(c(sum_glt$n[1], sum_glt$n[5]), c(sum(sum_glt$n[1:2]), sum(sum_glt$n[5:6])))$p.value)
+)
+
+
+# How does the delivery method affect the FR?
+
+subdat_fr <- subdat %>%
+  filter(complete.cases(Delivery.Method)) %>% 
+  group_by(Delivery.Method) %>% 
+  mutate(n = n()) %>% 
+  mutate(label = paste0('\nN = ',n))
+
+nlabel <- levels(factor(subdat_fr$label)) # also check manually
+
+
+fr_med <- subdat_fr %>% 
+  select(Founder.Rate, Delivery.Method) %>% 
+  group_by(Delivery.Method) %>% 
+  summarise(median = median(Founder.Rate)) 
+
+@  
+
+
+We examine the FR for the three delivery methods in Figure~\ref{fig:delivery}. 
+The pairwise comparisons of the FR via the Wilcoxon rank sum test indicate a significant difference between cytoplasmic injection (median = $\Sexpr{round(fr_med[1,2],3)}$) and pronuclear injection (median = $\Sexpr{round(fr_med[3,2],3)}$) and between electroporation (median = $\Sexpr{round(fr_med[2,2],3)}$) and pronuclear injection. 
+The FR does not significantly differ between cytoplasmic injection and electroporation. 
+The GLT rates for the three delivery methods are all higher than $95\%$ ($\Sexpr{round(sum_glt[1,"GLT.Rate"],3)}$, $\Sexpr{round(sum_glt[3,"GLT.Rate"],3)}$ and $\Sexpr{round(sum_glt[5,"GLT.Rate"],3)}$, respectively) and do not show any significant difference in the pairwise comparisons via the Pearson chi-square test (all three p-values > $0.15$). 
+
+
+
+<<delivery, echo=FALSE, results='asis', fig.cap="FR of genes under different delivery methods.", fig.width = 7, fig.height = 5, fig.pos="!htb", out.width="75%">>=
+
+# ggboxplot(subdat_fr, 
+#           x = "Delivery.Method", 
+#           y = "Founder.Rate",
+#           add = "jitter") + 
+#   stat_compare_means(comparisons = list(c(1,2), c(2,3), c(1,3)),
+#                      label = "p.format") +
+#   theme(legend.position="none") + 
+#   labs(x = "", y = "Founder Rate")+
+#   coord_cartesian(ylim=c(0,0.65), xlim=c(1,3), clip="off") +
+#   annotate("text", x=c(1,2,3), y=-0.07, label=nlabel) 
+
+
+
+ggplot(subdat_fr, aes(x = Delivery.Method, y = Founder.Rate)) +
+  geom_violin(fill="gray") +
+  geom_boxplot(width=0.1, outlier.shape = NA) +
+ stat_compare_means(comparisons = list(c(1,2), c(2,3), c(1,3)),
+                     label = "p.format") +
+  theme_classic() +
+  labs(x = "", y = "Founder Rate")+
+  coord_cartesian(ylim=c(0,0.65), xlim=c(1,3), clip="off") +
+  annotate("text", x=c(1,2,3), y=-0.07, label=nlabel)
+
+
+
+
+@
+
+
+
+
+
+\subsubsection*{Comparisons of Founder and GLT Rates based on Number of Guides}
+
+<<echo=FALSE, results='asis'>>=
+
+# How does the number of guides affect the GLT status?
+
+sum_glt <- subdat %>%
+  filter(complete.cases(Num.Guides)) %>% 
+  filter(Num.Guides != 3) %>%
+  mutate(Num.Guides = factor(Num.Guides)) %>%
+  filter(Founder.Rate>0) %>%
+  group_by(Num.Guides, GLT) %>% 
+  summarise(n=n(), .groups = 'drop_last') %>%
+  mutate(GLT.Rate = n/sum(n))
+
+suppressWarnings( 
+  glt_pval <-  prop.test(c(sum_glt$n[1], sum_glt$n[3]), c(sum(sum_glt$n[1:2]), sum(sum_glt$n[3:4])))$p.value
+)
+
+
+# How does the number of guides affect the FR?
+
+subdat_fr <- subdat %>% 
+  filter(complete.cases(Num.Guides)) %>%  
+  filter(Num.Guides != 3) %>%
+  mutate(Num.Guides = factor(Num.Guides)) %>%
+  group_by(Num.Guides) %>% 
+  mutate(n = n()) %>% 
+  mutate(label = paste0('\nN = ',n))
+
+nlabel <- unique(subdat_fr$label)
+
+
+fr_med <- subdat_fr %>% 
+  select(Founder.Rate, Num.Guides) %>% 
+  group_by(Num.Guides) %>% 
+  summarise(median = median(Founder.Rate)) 
+
+
+@  
+
+
+
+
+The FR of genes edited using 2 guides versus 4 guides are displayed in Figure~\ref{fig:guides}. 
+Based on the Wilcoxon rank sum test, we concluded that there is no significant difference between the median FR of genes edited using 2 guides (median = $\Sexpr{round(fr_med[1,2],3)}$ ) and 4 guides (median = \Sexpr{round(fr_med[2,2],3)}).
+The Pearson chi-square test also indicated no significant difference (p-value = $\Sexpr{round(glt_pval,3)}$) between the GLT rates of genes edited using 2 guides (GLT = $\Sexpr{round(sum_glt[1,"GLT.Rate"],3)}$) and 4 guides (GLT = $\Sexpr{round(sum_glt[3,"GLT.Rate"],3)}$) genes. 
+
+
+
+
+
+<<guides, echo=FALSE, results='asis', fig.cap="FR of genes under different number of guides.", fig.width = 7, fig.height = 5, fig.pos="!htb", out.width="65%">>=
+
+ 
+# ggboxplot(subdat_fr, 
+#           x = "Num.Guides", 
+#           y = "Founder.Rate",
+#           #   color = "Num.Guides", 
+#           add = "jitter") + 
+#   stat_compare_means(aes(group = Num.Guides), 
+#                      label = "p.format", 
+#                      colour="black", 
+#                      label.y = max(subdat$Founder.Rate)*1.05,
+#                      label.x = 1.4) +
+#   theme(legend.position="none") + 
+#   labs(x = "", y = "Founder Rate") +
+#   geom_segment(aes(x = 1.1, y = 0.46, xend = 1.1, yend = 0.48), colour="black", linetype= 1)+
+#   geom_segment(aes(x = 1.9, y = 0.46, xend = 1.9, yend = 0.48), colour="black", linetype= 1)+
+#   geom_segment(aes(x = 1.1, y = 0.48, xend = 1.9, yend = 0.48), colour="black", linetype= 1)+
+#   coord_cartesian(ylim=c(0,0.5), xlim=c(1,2), clip="off") +
+#   annotate("text", x=c(1,2), y=-0.05, label=nlabel) 
+
+
+
+
+ggplot(subdat_fr, aes(x = Num.Guides, y = Founder.Rate)) +
+  geom_violin(fill="gray") +
+  geom_boxplot(width=0.1, outlier.shape = NA) +
+  stat_compare_means(aes(group = Num.Guides),
+                     label = "p.format",
+                     colour="black",
+                     label.y = max(subdat$Founder.Rate)*1.05,
+                     label.x = 1.4) +
+  theme_classic() +
+  labs(x = "", y = "Founder Rate")+
+  geom_segment(aes(x = 1.1, y = 0.46, xend = 1.1, yend = 0.48), colour="black", linetype= 1)+
+  geom_segment(aes(x = 1.9, y = 0.46, xend = 1.9, yend = 0.48), colour="black", linetype= 1)+
+  geom_segment(aes(x = 1.1, y = 0.48, xend = 1.9, yend = 0.48), colour="black", linetype= 1)+
+  coord_cartesian(ylim=c(0,0.65), xlim=c(1,2), clip="off") +
+  annotate("text", x=c(1,2), y=-0.05, label=nlabel)
+
+
+
+
+@
+
+
+
+
+
+
+
+
+
+\subsubsection*{Comparisons of Founder and GLT Rates based on Deletion Size}
+
+
+<<echo=FALSE, results='asis'>>=
+
+# How does the deletion size affect the GLT status?
+
+# table(mltools::bin_data(subdat$Cut.Size, bins=6, binType = "quantile")) # manually determine the bins
+
+sum_glt <- subdat %>% 
+  mutate(CutBin = cut(Cut.Size, breaks = c(0, 360, 490, 640, 880, 1400, 10000))) %>%
+  mutate(CutBin = factor(CutBin, labels = c("(0,360]", "(360,490]", "(490,640]", "(640,880]", "(880, 1400]", "1400+"))) %>%
+  filter(Founder.Rate>0) %>%
+  filter(complete.cases(CutBin)) %>%
+  group_by(CutBin, GLT) %>% 
+  summarise(n=n(), .groups = 'drop_last') %>% 
+  mutate(GLT.Rate = n/sum(n))
+
+
+suppressWarnings( 
+  glt_pval <- prop.test(
+    c(sum_glt$n[1], sum_glt$n[3], sum_glt$n[5], sum_glt$n[7], sum_glt$n[9], sum_glt$n[11]), 
+    c(sum(sum_glt$n[1:2]), sum(sum_glt$n[3:4]), sum(sum_glt$n[5:6]), 
+      sum(sum_glt$n[7:8]), sum(sum_glt$n[9:10]), sum (sum_glt$n[11:12])))$p.value
+)
+
+
+@
+
+
+
+The deletion size is another experimental factor that may influence the success of gene editing. 
+The FR of genes across deletion size of six bins of roughly equal size are displayed in Figure~\ref{fig:deletion}. Based on the Kruskal-Wallis test for comparing the medians of six groups, we conclude that the FR does not differ significantly across different deletion sizes. The GLT rate comparison of the six groups also yielded no significant difference (p-value = $\Sexpr{round(glt_pval,3)}$).
+
+
+
+<<deletion, echo=FALSE, results='asis', fig.cap="FR of genes across different deletion size (base pairs).", fig.width = 7, fig.height = 5, fig.pos="!htb", out.width="65%">>=
+
+# How does the deletion size affect the FR?
+
+# subdat %>% 
+#   mutate(CutBin = cut(Cut.Size, breaks = c(0, 360, 490, 640, 880, 1400, 10000))) %>%
+#   mutate(CutBin = factor(CutBin, labels = c("(0,360]", "(360,490]", "(490,640]", "(640,880]", "(880, 1400]", "1400+"))) %>%
+#   filter(complete.cases(CutBin)) %>%
+#   ggboxplot(x = "CutBin", 
+#             y = "Founder.Rate",
+#             add = "jitter") + 
+#   stat_compare_means( aes(group = CutBin), label = "p.format", colour="black") +
+#   theme(legend.position="none") + 
+#   labs(x = "Deletion Size (base pairs)", y = "Founder Rate") #+
+# 
+
+subdat_fr <- subdat %>% 
+  mutate(CutBin = cut(Cut.Size, breaks = c(0, 360, 490, 640, 880, 1400, 10000))) %>%
+  mutate(CutBin = factor(CutBin, labels = c("(0,360]", "(360,490]", "(490,640]", "(640,880]", "(880, 1400]", "1400+"))) %>%
+  filter(complete.cases(CutBin)) %>%
+  group_by(CutBin) %>% 
+  mutate(n = n()) %>% 
+  mutate(label = paste0('\nN = ',n))
+
+nlabel <- unique(subdat_fr$label)[c(2,5,6,4,1,3)]   # double-check with table(subdat_fr$CutBin)
+  
+ggplot(subdat_fr, aes(x = CutBin, y = Founder.Rate)) +
+  geom_violin(fill="gray") +
+  geom_boxplot(width=0.1, outlier.shape = NA) +
+  stat_compare_means( aes(group = CutBin), label = "p.format", colour="black") +
+  theme_classic() +
+  labs(x = "", y = "Founder Rate") +
+  coord_cartesian(ylim=c(0, 0.55), xlim=c(1,6), clip="off") +
+  annotate("text", x=c(1,2,3,4,5,6), y=-0.05, label=nlabel)
+
+
+@
+
+
+
+
+
+\subsubsection*{Comparisons of Founder and GLT Rates based on Number of Founders Selected for Breeding}
+
+For the genes where there was a founder selected for breeding ($\Sexpr{sum(subdat$Founders.Breeding==0)}$ out of $\Sexpr{sum(table(subdat$Founders.Breeding))}$ genes had no founders), we examine the relationships of the number of founders selected for breeding with the GLT rate. 
+
+<<breeding, echo=FALSE, results='asis', fig.cap="GLT rate across different number of founders selected for breeding.", fig.width = 7, fig.height = 5, fig.pos="!htb", out.width="65%">>=
+
+# How does the number of founders selected for breeding affect the GLT status?
+
+sum_glt <- subdat %>%
+  filter(complete.cases(Founders.Breeding)) %>%
+  filter(Founders.Breeding>0) %>%
+  filter(Founder.Rate>0) %>%
+  mutate(Founders.Breeding  = factor(Founders.Breeding, levels = c(1,2,3,4,5,6,7,8,16), labels = c("1","2","3", "4+", "4+", "4+", "4+","4+", "4+"))) %>%
+  group_by(Founders.Breeding, GLT) %>% 
+  summarise(n=n(), .groups = 'drop_last') %>% 
+  mutate(GLT.Rate = n/sum(n))
+
+label<- sum_glt %>%
+  group_by(Founders.Breeding) %>%
+  summarise(N = sum(n)) %>%
+  mutate(nlabel = paste0('\nN = ', N))
+
+glt_test <- prop.test(c(sum_glt$n[1], sum_glt$n[3], sum_glt$n[5], sum_glt$n[7]), 
+                      c(sum(sum_glt$n[1:2]), sum(sum_glt$n[3:4]), sum(sum_glt$n[5:6]), sum(sum_glt$n[7:8])))
+
+glt_test_pairs <- pairwise.prop.test(c(sum_glt$n[1], sum_glt$n[3], sum_glt$n[5], sum_glt$n[7]), 
+                                     c(sum(sum_glt$n[1:2]), sum(sum_glt$n[3:4]), sum(sum_glt$n[5:6]), 
+                                       sum(sum_glt$n[7:8])), p.adjust.method = "holm")
+
+
+sum_glt %>% 
+  mutate(GLT = fct_rev(factor(GLT, labels = c("GLT", "no GLT")))) %>%
+  ggplot(aes(y=100*GLT.Rate, x=Founders.Breeding, fill=GLT)) + 
+  geom_bar(stat="identity", width = 0.9) + 
+  scale_colour_grey(start = 0.8, end = 0.2, aesthetics = "fill") +
+  geom_text(aes(x = Founders.Breeding, label = paste0(100*round(GLT.Rate,3),'%')),
+            colour = 'white', position=position_stack(vjust=0.5), 
+            size=rep(c(3.5,0), 4)) + 
+  labs(x = "", y = "", fill="", title = "") +
+  coord_cartesian(ylim=c(0,100), xlim=c(1,4), clip="off") +
+  annotate("text", x=c(1,2,3,4), y=-12, 
+           label=unique(label$nlabel),
+           size = 3.5) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(), 
+        axis.line = element_line(colour = "black"), 
+        legend.position="bottom",
+        legend.direction = "horizontal")+
+  guides(fill = guide_legend(reverse = TRUE)) 
+
+
+@
+
+
+
+
+The GLT rate comparisons in Figure~\ref{fig:breeding} indicated a significant difference (p-value = $\Sexpr{round(glt_test$p.value,3)}$) across the four groups, where the GLT rates are $(\Sexpr{round(glt_test$estimate, 3)})$.
+The pairwise comparisons of the GLT rates (with multiple comparison correction based on the Holm method, which is the default method) suggest a significant difference only for the cases with 3 founders (p-value = $\Sexpr{round(glt_test_pairs$p.value[2,1],3)}$) and with 4 or more founders (p-value = $\Sexpr{round(glt_test_pairs$p.value[3,1],3)}$)  compared to the case where one founder was selected for breeding.
+
+
+
+
+
+
+
+
+
+
+\clearpage
+
+\section*{Evaluation of Success Rates in Repeated Attempts}
+
+<<echo=FALSE, results='asis', warning=FALSE>>=
+
+# In the repeat analysis, we use the merged dataset to examine the rates of "GLT", "no GLT, no repeat" and "no GLT with repeats" for each trial, sequentially.
+# To facilitate the repeat analysis, we add the trial number for each experiment based on the Mi.Date, as well as the total number of trials for the gene.
+
+mergedat_wide <- mergedat %>% 
+  group_by(GeneSymbol_ProductionCentre) %>%  
+  mutate(Trial =  order(Mi.Date)) %>%
+  mutate(NumRep = n()) %>%
+  select(GeneSymbol_ProductionCentre, Trial, GLT, Cellular.Essential) %>%
+  pivot_wider(names_from = Trial, names_prefix = "Trial", values_from = GLT) 
+  
+  
+mergedat_wide <- mergedat_wide %>%
+  mutate(Tr1 = factor(ifelse(is.na(Trial2), Trial1, "r"), 
+                      levels = c("1", "2", "r"), labels = c("f","t", "r")),
+         Tr2 = factor(ifelse(is.na(Trial3), Trial2, "r"), 
+                      levels = c("1", "2", "r"), labels = c("f","t", "r")),
+         Tr3 = factor(ifelse(is.na(Trial4), Trial3, "r"), 
+                      levels = c("1", "2", "r"), labels = c("f","t", "r")))  %>% 
+  unite(Tr4, Trial4: Trial7, remove = FALSE) %>% 
+  relocate(Tr4, .after = Tr3) %>% 
+  mutate(Tr4 = ifelse(Tr4 =="NA_NA_NA_NA", NA, ifelse(grepl("t",Tr4), "t", "f"))) 
+
+plotdat <- mergedat_wide %>% 
+  select(GeneSymbol_ProductionCentre, Cellular.Essential,
+          Tr1, Tr2, Tr3, Tr4) %>%
+  gather(key = "variable", value = "value", Tr1:Tr4)
+
+
+
+plotdat.rep <- plotdat %>%
+  drop_na(value) %>%
+  mutate(variable = factor(variable, 
+                           levels=c("Tr1", "Tr2", "Tr3", "Tr4"), 
+                           labels = c("1st attempt", "2nd attempt", "3rd attempt", "4th or more attempt"))) %>%
+  group_by(variable) %>% 
+  mutate(label = paste0('\nN = ', n())) %>%
+  mutate(value = factor(value, levels = c("r","f","t"), labels= c("Repeated", "Aborted", "Successful"))) %>%
+  group_by(variable, label, value) %>% 
+  summarise('number'= n(),.groups = 'drop_last') %>%
+  ungroup() %>%
+  mutate('relative'= unlist(by(data = number, INDICES = variable, 
+                               FUN = function(x) round(x/sum(x)*100, digits = 1))))
+
+
+
+@
+
+
+
+
+We next examine the success rates of Cas9 gene editing in repeated attempts by production centre. Figure~\ref{fig:repeat} displays the number and proportion of genes that were successful with GLT, aborted upon no GLT and repeated upon no GLT in the first, second and third attempts. For four or more attempts, we summarize the cases with and without GLT only. 
+Among the $\Sexpr{nrow(mergedat_wide)}$ unique gene-centre combinations, $\Sexpr{plotdat.rep[3,4]}$ were successful with GLT in the first attempt, $\Sexpr{plotdat.rep[2,4]}$ were aborted and $\Sexpr{plotdat.rep[1,4]}$ were repeated for at least a second time.
+The high success rate in the first attempt drops drastically in the second attempt and is neglible in the follow-up attempts. 
+
+
+
+<<repeat, echo=FALSE, results='asis', fig.cap="Distribution of the GLT status of experiments at each attempt", fig.width = 7, fig.height = 5, fig.pos="!htb", out.width="80%">>=
+
+
+
+
+
+ggplot(plotdat.rep, aes(y=relative, x=variable, fill=value)) + 
+  geom_bar(stat="identity", width = 0.9) + 
+  scale_colour_grey(start = 0.8, end = 0.2, aesthetics = "fill") +
+  geom_text(aes(x = variable, label = paste0(relative,'%')),
+            colour = 'white', position=position_stack(vjust=0.5), 
+            size=c(rep(3.5,9), rep(3.5,2))) + 
+  labs(x = "", y = "", fill="", title = "") +
+  coord_cartesian(ylim=c(0,100), xlim=c(1,4), clip="off") +
+  annotate("text", x=c(1,2,3,4), y=-12, 
+           label=unique(plotdat.rep$label),
+           size = 3.5) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(), 
+        axis.line = element_line(colour = "black"), 
+        legend.position="bottom",
+        legend.direction = "horizontal")+
+  guides(fill = guide_legend(reverse = TRUE)) 
+
+
+@
+
+
+
+
+We also examine the success rates of Cas9 gene editing for essential and non-essential genes. Figure~\ref{fig:repessen} displays the number and proportion of essential and non-essential genes that were succcessful with GLT, aborted upon no GLT and repeated upon no GLT in repeated trials.  
+We observe that the success rate is consistently lower for essential genes than non-essential genes in each sequential attempt.
+
+
+<<repessen, echo=FALSE, results='asis', fig.cap="Distribution of the GLT status of experiments at each attempt for essential and non-essential genes", fig.width = 7, fig.height = 5, fig.pos="!htb", out.width="80%">>=
+
+plotdat.trial <- plotdat %>%
+  drop_na(value) %>%
+  drop_na(Cellular.Essential) %>%
+  mutate(Cellular.Essential=fct_rev(Cellular.Essential)) %>%
+  mutate(variable = factor(variable,
+                           levels=c("Tr1", "Tr2", "Tr3", "Tr4"),
+                           labels = c("1st attempt", "2nd attempt", "3rd attempt", "4th or more attempt"))) %>%
+  mutate(value = factor(value,
+                        levels = c("t","f","r"),
+                        labels = c("Successful", "Aborted", "Repeated"))) %>%
+  group_by(Cellular.Essential, variable) %>%
+  mutate(label = paste0('\nN = ', n())) %>%
+  group_by(Cellular.Essential, variable, label, value) %>%
+  summarise('number'= n(),.groups = 'drop_last') %>%
+  ungroup() %>%
+  mutate('relative'=unlist(by(data = number, INDICES = list(variable,Cellular.Essential),
+                              FUN = function(x) round(x/sum(x)*100, digits = 1))))
+
+
+
+ggplot(plotdat.trial, aes(x=Cellular.Essential, y = relative,
+                           fill = value, group = variable)) +
+   geom_bar(stat="identity", width = 0.9) +
+   facet_wrap(~ variable, ncol=4) +
+   scale_colour_grey(aesthetics = "fill") +
+  geom_text(aes(x = Cellular.Essential, label = paste0(relative,'%')),
+            colour = 'white', position=position_stack(vjust=0.5),
+            size=rep(3.5,22)) +
+  labs(x = "", y = "", fill="", title = "") +
+  coord_cartesian(ylim=c(0,100), xlim=c(1,2), clip="off") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        legend.position="bottom",
+        legend.direction = "horizontal")+
+  guides(fill = guide_legend(reverse = FALSE))+
+  geom_text(y=-10,label=plotdat.trial$label, size = 3.5)
+
+@
+
+
+\bigskip
+
+<<echo=FALSE, results='asis'>>=
+
+mergedat <- mergedat %>% 
+  group_by(GeneSymbol_ProductionCentre) %>%  
+  mutate(Trial =  order(Mi.Date)) %>%
+  mutate(NumRep = n())
+
+@  
+
+The reason for failure in obtaining GLT was available for $\Sexpr{sum(!is.na(mergedat$Reason.GLT.Failed))}$ experiments, where $\Sexpr{colSums(table(mergedat$Reason.GLT.Failed, mergedat$Trial))[1]}$  failed in the first trial. 
+Figure~\ref{fig:pie} displays the distribution of the identified reasons of failure in these experiments.  
+The majority of failures was due to a failure in allele QC.
+ In $\Sexpr{round((sum(mergedat$Reason.GLT.Failed == "No progeny from founder", na.rm=T) +  sum(mergedat$Reason.GLT.Failed == "Sterile founder",na.rm=T))/ sum(table(mergedat$Reason.GLT.Failed))*100,1) + round(sum(mergedat$Reason.GLT.Failed == "Only WT progeny from founder",na.rm=T) / sum(table(mergedat$Reason.GLT.Failed))*100,1)}\%$ of the failed experiments, there was either no progeny or only wild-type progeny was obtained. Loosing founder before breeding was another common reason for no GLT.
+
+
+<<pie, echo=FALSE, results='asis', fig.cap="Distribution of reasons for GLT failure.", fig.width = 7.5, fig.height = 7.5, fig.pos="!htb", out.width="50%">>=
+
+piedat <- mergedat %>% 
+  mutate(Reason.GLT.Failed = factor(Reason.GLT.Failed, 
+                                    levels = levels(Reason.GLT.Failed),
+                                    labels = c("Allele QC failed", 
+                                               "Founder(s) died \n before breeding", 
+                                               "No progeny \n from founder", 
+                                               "Only WT progeny \n from founder",
+                                               "Other", 
+                                               "No progeny \n from founder")))
+p <- PieDonut(piedat, aes(donuts = NULL, pies=Reason.GLT.Failed), 
+              labelposition=0, r0=0.3, showPieName=FALSE, star=3*pi/2, pieLabelSize = 4.5)
+
+suppressMessages(p+ theme(panel.border = element_blank())+scale_fill_grey())
+
+
+@
+
+
+
+\clearpage
+
+\subsection*{Model-based Assessment of Experimental Factors in Repeated Attempts of Gene Editing}
+
+
+
+<<echo=FALSE, results='asis'>>=
+
+
+# Consider all consecutive attempts and identify the experimental factors that differ between the two attempts. 
+
+workdat <- NULL
+
+for(i in 1:6){
+  
+  tempdat <- mergedat %>% 
+    filter(NumRep >= i+1 & Trial %in% c(i,i+1))  
+  
+  splitdat <- tempdat %>%
+    group_by(GeneSymbol_ProductionCentre) %>% 
+    select(GeneSymbol_ProductionCentre, Trial, GLT, Cellular.Essential, Delivery.Method, 
+           Cas9.Type, mRNA.Concentration, Protein.Concentration, Sorted.Cut.Sites, Num.Guides,  
+           Δ.Delivery.Method, Δ.mRNA.Concentration, Δ.Protein.Concentration, Δ.Cas9.Type, 
+           Δ.Sorted.Cut.Sites, Δ.Num.Guides, Δ.Guide.Seq, Δ.Exon) %>%
+    mutate_at(vars(starts_with("Δ.")), ~ifelse(is.na(.),0,1)) %>%
+    group_by(Trial) %>% group_split()
+  
+  tempdat2 <- splitdat[[2]] %>%
+    mutate(Diff.Delivery.Method = factor(ifelse(Delivery.Method == splitdat[[1]]$Delivery.Method, 0,1)),
+           Diff.Cas9.Type = factor(ifelse(Cas9.Type == splitdat[[1]]$Cas9.Type, 0,1)),
+           Diff.mRNA.Concentration  =  factor(ifelse(mRNA.Concentration == splitdat[[1]]$mRNA.Concentration, 0,1)),
+           Diff.Protein.Concentration  =  factor(ifelse(Protein.Concentration == splitdat[[1]]$Protein.Concentration, 0,1)),
+           Diff.Sorted.Cut.Sites = factor(ifelse(Sorted.Cut.Sites == splitdat[[1]]$Sorted.Cut.Sites, 0,1)),
+           Diff.Num.Guides = factor(ifelse(Num.Guides == splitdat[[1]]$Num.Guides, 0,1)),
+           Change.Num.Guides = factor(sign(Num.Guides - splitdat[[1]]$Num.Guides), levels = c(-1,0,1), labels = c("↓", "0", "↑")))
+  
+  workdat <- bind_rows(workdat, tempdat2)   
+  
+}
+
+rm(tempdat, tempdat2)
+
+workdat <- droplevels.data.frame(workdat)
+
+
+##################################################################
+# Checks for the change in experimental factors:
+#
+# table(workdat$Diff.Delivery.Method, workdat$Δ.Delivery.Method)  -- OK
+# table(workdat$Diff.mRNA.Concentration, workdat$Δ.mRNA.Concentration) -- OK
+# table(workdat$Diff.Protein.Concentration, workdat$Δ.Protein.Concentration) -- OK
+# table(workdat$Diff.Cas9.Type, workdat$Δ.Cas9.Type) -- OK
+# table(workdat$Diff.Num.Guides, workdat$Δ.Num.Guides) -- OK
+# table(workdat$Diff.Sorted.Cut.Sites, workdat$Δ.Sorted.Cut.Sites) -- OK
+##################################################################
+
+# Initial investigations via chi-square test for contingency table for selected covariates:
+
+pvals <- c( chisq.test(table(workdat$GLT, workdat$Δ.Delivery.Method))$p.value,
+            chisq.test(table(workdat$GLT, workdat$Change.Num.Guides))$p.value,
+            chisq.test(table(workdat$GLT, workdat$Δ.Guide.Seq))$p.value,
+            chisq.test(table(workdat$GLT, workdat$Δ.Exon))$p.value)
+
+
+@
+
+
+
+
+Another question of interest is whether changing different experimental factors increase or decrease the success rate of the repeated attempts from the immediately previous attempt. To address this question, we consider all consecutive attempts and identify the experimental factors that differ between the two attempts. For the initial investigations, we perform the chi-square test for contingency tables and assess whether there is any association between the GLT status and changing each experimental factor. The results suggest no significant association with changing 
+the delivery method (p-value = $\Sexpr{round(pvals[1],3)}$), 
+number of guides (p-value = $\Sexpr{round(pvals[2],3)}$, when considering both increase and decrease rather than only change) 
+and exon (p-value = $\Sexpr{round(pvals[4],3)}$). 
+However, changing the guide size (p-value = $\Sexpr{round(pvals[3],3)}$) is found to be associated with the GLT status.
+
+
+
+
+
+
+
+
+
+
+
+
+
+<<echo=FALSE, results='asis'>>=
+
+# Full logistic regression
+
+# revise factor levels for the increase and decrease in the number of guides:
+workdat2 <- workdat %>% mutate(Δ.Num.Guides = factor(Change.Num.Guides, levels = c("0", "↓", "↑")))
+
+mglt <- glm(GLT ~ Δ.Delivery.Method
+             + Δ.Num.Guides
+             + Δ.Guide.Seq 
+             + Δ.Exon 
+             , 
+             data = workdat2, family= binomial)
+
+# tab_model(mglt, show.r2 = FALSE, file = "mglt.html")  ## convert html to pdf then upload to the tex file for displaying the fitted model. 
+
+
+@
+
+
+
+
+
+
+
+
+
+We further consider a logistic regression model for the GLT status conditional on the changes in the experimental factors, namely, the delivery method, number of guides, guide sequence and exon. 
+The fitted model suggests that a borderline significant effect (p-value = $\Sexpr{round(summary(mglt)$coeff[5,4],3)}$) for the guide sequence on the GLT status after accounting for the other factors in the model. The odds ratio for the change in the guide sequence is $1.88$, which indicates that changing the guide sequence upon an unsuccessful attempt increases the odds of obtaining GLT by a factor of $1.88$ compared to the not changing the guide sequence. See below for the summary of the fitted model and effect plots.
+Even though the other effects were not significant, the negative slope in the effect plots indicate a decrease in the GLT rate (e.g., Cas9 type) and the positive slope indicates an increase in the GLT rate (e.g., Guide sequence).
+
+
+% \begin{center}
+% \includegraphics[scale = 0.3]{mglt.png}
+% \includegraphics[scale = 0.4]{effects.png}
+% \end{center}
+
+<<echo=FALSE, results='asis', out.width = "55%">>=
+knitr::include_graphics(file.path(data_path, "mglt.png"))
+@
+
+<<echo=FALSE, results='asis', out.width = "75%">>=
+knitr::include_graphics(file.path(data_path, "effects.png"))
+@
+
+
+<<tab:effect, echo=FALSE, results='asis'>>=
+
+# for effect plots, rename the factor levels and revise the order of factor levels for the number of guides:
+
+workdat3 <- workdat %>%
+  mutate(Δ.Delivery.Method = factor(Δ.Delivery.Method, levels = c(0,1), labels = c("no change", "change")),
+         Δ.Num.Guides = factor(Change.Num.Guides, levels = c( "↓", "0", "↑"), labels =c( "↓", "no change", "↑") ) ,
+         Δ.Guide.Seq = factor(Δ.Guide.Seq, levels = c(0,1), labels = c("no change", "change")),
+         Δ.Exon = factor(Δ.Exon, levels = c(0,1), labels = c("no change", "change")))
+
+# re-fit the model:
+
+mglt_revised <- glm(GLT ~ Δ.Delivery.Method
+             + Δ.Num.Guides
+             + Δ.Guide.Seq
+             + Δ.Exon
+             ,
+             data = workdat3, family= binomial)
+
+# manually save the figure as a png file as the symbols are not displayed properly. 
+# plot(allEffects(mglt_revised), main = "", ylab = "GLT rate", lines = list(col= "black"), ylim = c(-2.2,2.2))  
+
+
+# Table summarizing effects:
+
+tab_effect <- as.data.frame(allEffects(mglt_revised))
+Change <- c( "no change", "change", "decrease", "no change", "increase", "no change", "change", "no change", "change")
+Factor = c(rep("Delivery.Method", 2), rep("Num.Guides", 3), rep("Guide.Seq",2), rep("Exon",2))
+
+tab_effect <- bind_rows(tab_effect[[1]][,-1], 
+                        tab_effect[[2]][,-1], 
+                        tab_effect[[3]][,-1], 
+                        tab_effect[[4]][,-1])
+tab_effect <- round(tab_effect,3)
+tab_effect <- data.frame(Factor, Change, tab_effect)
+rownames(tab_effect) <- NULL
+colnames(tab_effect)[1:2] <- ""
+
+
+kable(tab_effect, align= c("l",  rep("c",5)),
+       booktabs = TRUE,  caption = "\\label{tab:effect} Summary of estimated effects.", escape =
+         FALSE ) %>% 
+   kable_styling(latex_options = "hold_position", fixed_thead = T, full_width = FALSE, font_size=8.5) %>%
+  row_spec(0, bold=TRUE) %>%   
+  column_spec(1, bold=TRUE) %>%
+  collapse_rows(columns = 1)
+  
+@
+
+
+
+<<echo=FALSE, results='asis'>>=
+
+# Logistic regression for GLT using glmnet & caret:
+ 
+ y <- workdat2$GLT
+ x <- workdat2 %>% 
+   select(Δ.Delivery.Method, Δ.Num.Guides, Δ.Guide.Seq, Δ.Exon) %>% 
+   mutate(Δ.Delivery.Method = factor(Δ.Delivery.Method, levels = c("0","1")),
+          Δ.Guide.Seq = factor(Δ.Guide.Seq, levels = c("0","1")),
+          Δ.Exon = factor(Δ.Exon, levels = c("0","1"))) 
+ 
+# cor.x <- round(polycor::hetcor(x)$correlations,3)
+# cor.x 
+ 
+ regdat <- cbind(y,x)
+
+# create training and test datasets:
+set.seed(428)
+#y <- sample(0:1, 10, replace = TRUE)
+idx <- createDataPartition(y, p = 0.80, list = FALSE)
+trn <- regdat[idx, ]
+tst <- regdat[-idx, ]
+
+cv_5 <- trainControl(method = "cv", number = 5)
+elnet <- train(
+  y ~ ., data = trn,
+  method = "glmnet",
+  trControl = cv_5,
+  tuneLength = 10
+)
+ fit <- glmnet::glmnet(x, y, data = trn, family = "binomial", lambda = elnet$bestTune$lambda, alpha = elnet$bestTune$alpha)
+# coef(fit)
+
+ 
+ 
+ 
+
+# classification accuracy 
+ 
+accuracy <- function(actual, predicted) {
+  mean(actual == predicted)
+}
+a <- accuracy(actual = tst$y, predicted = predict(elnet, newdata = tst))*100
+
+# logistic regression on training data
+mfull <- glm(y ~., data = trn, family = "binomial")
+pred.glt <- ifelse(mfull %>% predict(tst, type = "response") > 0.5, "t", "f")
+b <- accuracy(actual = tst$y, predicted = pred.glt)*100
+
+@
+
+
+\bigskip
+
+Since the changes in experimental factors are expected to be associated with each other, we calculated the phi coefficient as well as the tetrachoric correlation coefficient as measures of association between two binary variables.
+We found moderate-to-strong associations between the changes in the guide sequence with exon($\phi = \Sexpr{psych::phi(table(workdat$Δ.Guide.Seq, workdat$Δ.Exon), digits = 3)}$, $\rho = \Sexpr{round(psych::tetrachoric(table(workdat$Δ.Guide.Seq, workdat$Δ.Exon))$rho, 3)}$) and number of guides ($\phi = \Sexpr{psych::phi(table(workdat$Δ.Guide.Seq, workdat$Δ.Num.Guides), digits = 3)}$, $\rho = \Sexpr{round(psych::polychoric(table(workdat$Δ.Guide.Seq, workdat$Δ.Num.Guides))$rho, 3)}$).  
+Since these associations may cause collinearity in the logistic regression model, we also fit an elastic net logistic regression model which performs variable selection and accounts for collinearity through penalization.
+The penalty parameters (obtained using 5-fold cross-validation on 80\% training data) are $\lambda = \Sexpr{round(elnet$bestTune$lambda,2)}$ and $\alpha = \Sexpr{elnet$bestTune$alpha}$. The resulting model kept all four experimental factors as relevant to explain the GLT status, suggesting that the elastic net penalty may not be necessary, and hence the fitted logistic regression model is sufficient. 
+Note that both the logistic regression and the elastic net regression have only $\Sexpr{round(a,2)} \%$ classification accuracy of the GLT status, which is only slightly better than a random guess. 
+
+
+
+
+
+
+
+
+
+
+\subsection*{A Detailed Look at the Experimental Factors}
+
+We next examine whether the proportion of essential genes show any significant difference between various categories of experimental factors. This was assessed using the chi-square test for proportions.
+Table~\ref{tab:essen} reports the proportion of essential genes in each category of the experimental factors along with the p-values for the pairwise comparisons (adjusted for multiple comparisons based on the Holm method). 
+
+
+
+<<tab:essen, echo=FALSE, results='asis'>>=
+
+
+# Is there any association between the experimental factors and the gene type? 
+
+#  Delivery Method
+test1a <- prop.test(table(subdat$Delivery.Method, subdat$Gene.Type))
+test1b <- pairwise.prop.test(table(subdat$Delivery.Method, subdat$Gene.Type), p.adjust.method = "holm")
+dm <- data.frame(rbind(c(1- test1a$estimate[c(1,2)], test1b$p.value[1]), 
+                       c(1- test1a$estimate[c(1,3)], test1b$p.value[2]),
+                       c(1- test1a$estimate[c(2,3)], test1b$p.value[4])))
+dm.names <- c("Cytoplasmic Injection vs Electroporation", "Cytoplasmic Injection vs Pronuclear Injection", "Electroporation vs Pronuclear Injection")
+
+# Number of Guides
+subdat2 <- subdat %>% 
+  filter(complete.cases(Num.Guides)) %>%  
+  filter(Num.Guides != 3) %>%
+  mutate(Num.Guides = factor(Num.Guides)) 
+test2a <- prop.test(table(subdat2$Num.Guides, subdat2$Gene.Type))
+test2b <- pairwise.prop.test(table(subdat2$Num.Guides, subdat2$Gene.Type), p.adjust.method = "holm")
+ng <- data.frame(t(c(1- test2a$estimate, test2b$p.value)))
+ng.names <- "2 Guides vs 4 Guides"
+
+
+# Deletion Size
+subdat2 <- subdat %>% 
+  mutate(CutBin = cut(Cut.Size, breaks = c(0, 360, 490, 640, 880, 1400, 10000))) %>%
+  mutate(CutBin = factor(CutBin, labels = c("(0,360]", "(360,490]", "(490,640]", "(640,880]", "(880, 1400]", "1400+")))
+test3a <- prop.test(table(subdat2$CutBin, subdat2$Gene.Type))
+test3b <- pairwise.prop.test(table(subdat2$CutBin, subdat2$Gene.Type), p.adjust.method = "holm")
+cb <- data.frame(rbind(c(1- test3a$estimate[c(1,2)], test3b$p.value[1]), 
+                       c(1- test3a$estimate[c(1,3)], test3b$p.value[2]),
+                       c(1- test3a$estimate[c(1,4)], test3b$p.value[3]),
+                       c(1- test3a$estimate[c(1,5)], test3b$p.value[4]),
+                       c(1- test3a$estimate[c(1,6)], test3b$p.value[5]),
+                       c(1- test3a$estimate[c(2,3)], test3b$p.value[7]),
+                       c(1- test3a$estimate[c(2,4)], test3b$p.value[8]),
+                       c(1- test3a$estimate[c(2,5)], test3b$p.value[9]),
+                       c(1- test3a$estimate[c(2,6)], test3b$p.value[10]),
+                       c(1- test3a$estimate[c(3,4)], test3b$p.value[13]),
+                       c(1- test3a$estimate[c(3,5)], test3b$p.value[14]),
+                       c(1- test3a$estimate[c(3,6)], test3b$p.value[15]),
+                       c(1- test3a$estimate[c(4,5)], test3b$p.value[19]),
+                       c(1- test3a$estimate[c(4,6)], test3b$p.value[20]),
+                       c(1- test3a$estimate[c(5,6)], test3b$p.value[25])))
+cb.names <- apply(combn(levels(subdat2$CutBin),2), 2, paste, collapse = " vs ")
+
+# Number of Founders Selected for Breeding
+subdat2 <- subdat %>% 
+  filter(complete.cases(Founders.Breeding)) %>%
+  filter(Founders.Breeding>0) %>%
+  mutate(Founders.Breeding  = factor(Founders.Breeding, levels = c(1,2,3,4,5,6,7,8,16), labels = c("1","2","3", "4+", "4+", "4+", "4+","4+", "4+")))  
+test4a <- prop.test(table(subdat2$Founders.Breeding, subdat2$Gene.Type))
+test4b <- pairwise.prop.test(table(subdat2$Founders.Breeding, subdat2$Gene.Type), p.adjust.method = "holm")
+fb <- data.frame(rbind(c(1- test4a$estimate[c(1,2)], test4b$p.value[1]), 
+                       c(1- test4a$estimate[c(1,3)], test4b$p.value[2]),
+                       c(1- test4a$estimate[c(1,4)], test4b$p.value[3]),
+                       c(1- test4a$estimate[c(2,3)], test4b$p.value[5]),
+                       c(1- test4a$estimate[c(2,4)], test4b$p.value[6]),
+                       c(1- test4a$estimate[c(3,4)], test4b$p.value[9])))
+fb.names <- apply(combn(levels(subdat2$Founders.Breeding),2), 2, paste, collapse = " vs ")
+
+
+
+### Table with proportions and p-values 
+
+tab3 <- round(rbind(dm,ng,cb,fb),3)
+tab3 <- cbind(c(rep("Delivery Method", 3), "Number of Guides", rep("Deletion Size", 15), rep("Number of Founders", 6)),
+              c(dm.names, ng.names, cb.names, fb.names), tab3)
+colnames(tab3) <- c("", "","Proportion 1", "Proportion 2", "p-value")
+
+kable(tab3, align= c("l", "l", rep("c",3)),
+      booktabs = TRUE,  caption = "\\label{tab:essen} Pairwise comparisons of the proportion of essential genes in each experimental factor.", escape =
+        FALSE ) %>% 
+  kable_styling( latex_options = "hold_position", fixed_thead = T, full_width = FALSE, font_size = 8.5) %>%
+  row_spec(0, bold=TRUE) %>%
+  column_spec(1, bold=TRUE) %>%
+  collapse_rows(columns = 1)
+
+
+@
+
+
+The findings suggest that the proportion of essential genes do not show any significant difference among the categories of the number of guides, the number of founders selected for breeding and the deletion size (except for the last two categories, but since the bins were user-defined this could change with a different choice). However, the same is not true for the delivery methods. The proportion of essential genes is much higher in electroporation than cytoplasmic injection and pronuclear injection. 
+Despite this fact, electroporation achieved the highest median founder rate (see Figure~\ref{fig:delivery}). Hence, the high proportion of essential genes edited by this method did not result in an inferior performance in gene editing. 
+
+
+% Note that comparing the proportion of essential genes across all categories of the experimental factors resulted in a significant difference for the delivery method (p-value = $\Sexpr{round(test1a$p.value,3)}$), the deletion size (p-value = $\Sexpr{round(test3a$p.value,3)}$) and the number of founders selected for breeding (p-value = $\Sexpr{round(test4a$p.value,3)}$), where the latter is only borderline significant. 
+
+
+
+
+
+\end{document}
