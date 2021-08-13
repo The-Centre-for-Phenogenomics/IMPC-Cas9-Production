@@ -1,5 +1,9 @@
 # Files and Code for Cas9 Production Manuscript
 
+_Hillary Elrick, Elif Acar_
+
+_August 12, 2021_
+
 ## Directory Structure
 
 * annotation - _annotation files_
