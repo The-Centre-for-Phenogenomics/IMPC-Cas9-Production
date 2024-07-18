@@ -1,6 +1,6 @@
 ---
-title: "April 2021 Cas9 Production"
-date: "April 14th, 2021"
+title: "July 2024 Cas9 Production"
+date: "July 11th, 2024"
 output: pdf_document
 ---
 
@@ -46,7 +46,7 @@ Initially there are `r num_rows` rows in the dataset. For analysis, remove rows 
 * Cellular Essential
 * pLI of Human Orthologs
 * oe of Human Orthologs
-* Staining overlap (Gram positive)
+* Staining overlap (Giemsa positive)
 * Embryonic expression
 
 Or experiments that are both Methylated and Acetylated.
@@ -85,7 +85,7 @@ Essential <- ifelse(ds$`Cellular Essential` == "Essential", 1, 0)
 Acetylated = ifelse(ds$acetylation > 0, 1, 0)
 Methylated = ifelse(ds$methylation > 0, 1, 0)
 # staining as binary variable (gneg is 0, everything else is 1) 
-GramPositiveStain <- ifelse(ds$`Staining Overlap` != 'gneg', 1, 0)
+GiemsaPositiveStain <- ifelse(ds$`Staining Overlap` != 'gneg', 1, 0)
 # 'has OMIM annotation' as binary
 OmimAnnotation <- as.factor(ds$`Has Omim Annotation`)
 OmimAnnotation <- ifelse(ds$`Has Omim Annotation` == "t", 0, 1)
@@ -101,8 +101,8 @@ RelativeChromosomalLocation <- as.numeric(ds$`Relative Chromosomal Position`)
 
 Create general linear models with and without essentiality.
 ```{r models}
-without_essentiality <- glm(Founders ~ EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GramPositiveStain+OmimAnnotation, data=ds)
-with_essentiality <- glm(Founders ~ Essential+EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GramPositiveStain+OmimAnnotation, data=ds)
+without_essentiality <- glm(Founders ~ EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GiemsaPositiveStain+OmimAnnotation, data=ds)
+with_essentiality <- glm(Founders ~ Essential+EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GiemsaPositiveStain+OmimAnnotation, data=ds)
 ```
 
 ### GLM Statistics: Without Essentiality
@@ -143,9 +143,9 @@ with_essentiality_frame <- data.frame(Variable = rownames(summary(with_essential
 
 # reorder factor levels
 without_essentiality_frame$Variable <- factor(without_essentiality_frame$Variable, 
-                                              levels = c("EmbryonicExpression", "pLI", "oe", "Methylated", "Acetylated", "GramPositiveStain", "RelativeChromosomalLocation", "OmimAnnotation"))
+                                              levels = c("EmbryonicExpression", "pLI", "oe", "Methylated", "Acetylated", "GiemsaPositiveStain", "RelativeChromosomalLocation", "OmimAnnotation"))
 with_essentiality_frame$Variable <- factor(with_essentiality_frame$Variable, 
-                                              levels = c("Essential", "EmbryonicExpression", "pLI", "oe", "Methylated", "Acetylated", "GramPositiveStain", "RelativeChromosomalLocation", "OmimAnnotation"))
+                                              levels = c("Essential", "EmbryonicExpression", "pLI", "oe", "Methylated", "Acetylated", "GiemsaPositiveStain", "RelativeChromosomalLocation", "OmimAnnotation"))
 
 both_models <- data.frame(rbind(without_essentiality_frame, with_essentiality_frame))
 
@@ -165,7 +165,7 @@ zp1 <- zp1 + coord_flip() + theme_bw() + scale_color_manual(values = c("#b0b0b0"
 
 print(zp1)
 
-png('GLM_2021-04-14.png')
+png('GLM_2024-07-11.png')
 plot(zp1)
 dev.off() -> .
 ```
