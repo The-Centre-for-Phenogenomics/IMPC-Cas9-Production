@@ -1,6 +1,6 @@
 ---
 title: "July 2024 Cas9 Production"
-date: "July 11th, 2024"
+date: "July 20th, 2024"
 output: pdf_document
 ---
 
@@ -46,7 +46,7 @@ Initially there are `r num_rows` rows in the dataset. For analysis, remove rows 
 * Cellular Essential
 * pLI of Human Orthologs
 * oe of Human Orthologs
-* Staining overlap (Giemsa positive)
+* Staining overlap (Giemsa stain positive)
 * Embryonic expression
 
 Or experiments that are both Methylated and Acetylated.
@@ -101,27 +101,35 @@ RelativeChromosomalLocation <- as.numeric(ds$`Relative Chromosomal Position`)
 
 Create general linear models with and without essentiality.
 ```{r models}
-without_essentiality <- glm(Founders ~ EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GiemsaPositiveStain+OmimAnnotation, data=ds)
-with_essentiality <- glm(Founders ~ Essential+EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GiemsaPositiveStain+OmimAnnotation, data=ds)
+without_essentiality <- glm(Founders ~ EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GiemsaPositiveStain+OmimAnnotation, family="binomial", data=ds)
+with_essentiality <- glm(Founders ~ Essential+EmbryonicExpression+pLI+oe+RelativeChromosomalLocation+Acetylated+Methylated+GiemsaPositiveStain+OmimAnnotation, family="binomial", data=ds)
 ```
 
-### GLM Statistics: Without Essentiality
+### Logistic Regression Statistics: Without Essentiality
 
 Model Statistics:
 ```{r print_models_without, echo=FALSE}
 summary_without_essentiality <- summary(without_essentiality)
+pvals_without_essentiality <- summary_without_essentiality$coeff[,4]
+adj_pvals_without_essentiality <- p.adjust(pvals_without_essentiality)
 print(summary_without_essentiality,digits=6)
+print('Adjusted P-values')
+print(adj_pvals_without_essentiality)
 ```
 Log Odds:
 ```{r, echo=FALSE}
 stack(exp(without_essentiality$coefficients))
 ```
 
-### GLM Statistics: With Essentiality
+### Logistic Regression Statistics: With Essentiality
 Model Statistics:
 ```{r print_models_with, echo=FALSE}
 summary_with_essentiality <- summary(with_essentiality)
+pvals_with_essentiality <- summary_with_essentiality$coeff[,4]
+adj_pvals_with_essentiality <- p.adjust(pvals_with_essentiality)
 print(summary_with_essentiality,digits=6)
+print('Adjusted P-values')
+print(adj_pvals_with_essentiality)
 ```
 Log Odds:
 ```{r, echo=FALSE}
@@ -165,7 +173,7 @@ zp1 <- zp1 + coord_flip() + theme_bw() + scale_color_manual(values = c("#b0b0b0"
 
 print(zp1)
 
-png('GLM_2024-07-11.png')
+png('LR_2024-07-20.png')
 plot(zp1)
 dev.off() -> .
 ```
